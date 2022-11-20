@@ -1,0 +1,11 @@
+add_library(common STATIC
+    common_types.h
+    file_util.cpp
+    file_util.h
+    log.cpp
+    log.h
+    scope_exit.h
+    temp_ptr.h
+)
+
+target_link_libraries(common PRIVATE spdlog)
