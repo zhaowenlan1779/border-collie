@@ -259,6 +259,7 @@ void VulkanRenderer::CreateSwapchain(const vk::Extent2D& actual_extent) {
             .oldSwapchain = *swap_chain,
         }};
 
+    image_views.clear();
     for (const auto& image : swap_chain.getImages()) {
         image_views.emplace_back(
             device, vk::ImageViewCreateInfo{
@@ -365,6 +366,7 @@ void VulkanRenderer::CreateGraphicsPipeline() {
 }
 
 void VulkanRenderer::CreateFramebuffers() {
+    framebuffers.clear();
     for (const auto& image_view : image_views) {
         framebuffers.emplace_back(device, vk::FramebufferCreateInfo{
                                               .renderPass = *render_pass,
@@ -456,13 +458,17 @@ void VulkanRenderer::DrawFrame() {
 
         throw std::runtime_error("Failed to wait for fences");
     }
-    device.resetFences({*frame.in_flight_fence});
 
     const auto& [result, image_index] = swap_chain.acquireNextImage(
         std::numeric_limits<u64>::max(), *frame.image_available_semaphore);
-    if (result != vk::Result::eSuccess) {
+    if (result == vk::Result::eErrorOutOfDateKHR) {
+        SPDLOG_WARN("Swapchain is out of date, ignoring frame");
+        return;
+    } else if (result != vk::Result::eSuccess) {
         throw std::runtime_error("Failed to acquire next image");
     }
+
+    device.resetFences({*frame.in_flight_fence});
 
     frame.command_buffer.reset();
     RecordCommands(frame.command_buffer, image_index);
@@ -489,4 +495,11 @@ void VulkanRenderer::DrawFrame() {
     }
 
     current_frame = (current_frame + 1) % frames_in_flight.size();
+}
+
+void VulkanRenderer::RecreateSwapchain(const vk::Extent2D& actual_extent) {
+    device.waitIdle();
+
+    CreateSwapchain(actual_extent);
+    CreateFramebuffers();
 }

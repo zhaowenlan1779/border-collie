@@ -24,6 +24,7 @@ public:
 
     void Init(vk::SurfaceKHR surface, const vk::Extent2D& actual_extent);
     void DrawFrame();
+    void RecreateSwapchain(const vk::Extent2D& actual_extent);
 
 private:
     void CreateInstance(bool enable_validation_layers,

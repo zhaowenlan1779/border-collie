@@ -2,6 +2,7 @@
 // Licensed under GPLv2 or any later version
 // Refer to the license.txt file included.
 
+#include <functional>
 #include <memory>
 #include <utility>
 #include <spdlog/spdlog.h>
@@ -16,12 +17,22 @@
 #include "common/scope_exit.h"
 #include "core/renderer/vulkan_renderer.h"
 
+bool g_should_render = true;
+
+static void OnFramebufferResized(GLFWwindow* window, int width, int height) {
+    g_should_render = width != 0 && height != 0;
+
+    if (g_should_render) {
+        auto* renderer = reinterpret_cast<VulkanRenderer*>(glfwGetWindowUserPointer(window));
+        renderer->RecreateSwapchain({static_cast<u32>(width), static_cast<u32>(height)});
+    }
+}
+
 int main() {
     Common::InitializeLogging();
 
     glfwInit();
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-    glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
     GLFWwindow* window = glfwCreateWindow(800, 600, "Vulkan", nullptr, nullptr);
     SCOPE_EXIT({
         glfwDestroyWindow(window);
@@ -49,9 +60,15 @@ int main() {
         }
 
         renderer.Init(surface, vk::Extent2D{800, 600});
+
+        glfwSetWindowUserPointer(window, &renderer);
+        glfwSetFramebufferSizeCallback(window, &OnFramebufferResized);
+
         while (!glfwWindowShouldClose(window)) {
             glfwPollEvents();
-            renderer.DrawFrame();
+            if (g_should_render) {
+                renderer.DrawFrame();
+            }
         }
     }
 }
