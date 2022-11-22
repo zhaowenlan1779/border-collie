@@ -9,7 +9,7 @@
 #include <string_view>
 #include <spdlog/spdlog.h>
 #include "common/temp_ptr.h"
-#include "core/renderer/vulkan_raii_helpers.hpp"
+#include "core/renderer/vulkan_helpers.hpp"
 #include "core/renderer/vulkan_renderer.h"
 #include "core/renderer/vulkan_shader.h"
 
@@ -26,10 +26,11 @@ VulkanRenderer::~VulkanRenderer() {
 }
 
 static VKAPI_ATTR VkBool32 VKAPI_CALL DebugCallback(
-    VkDebugUtilsMessageSeverityFlagBitsEXT severity_, VkDebugUtilsMessageTypeFlagsEXT type,
-    const VkDebugUtilsMessengerCallbackDataEXT* callback_data, void* user_data) {
+    VkDebugUtilsMessageSeverityFlagBitsEXT severity_,
+    [[maybe_unused]] VkDebugUtilsMessageTypeFlagsEXT type,
+    const VkDebugUtilsMessengerCallbackDataEXT* callback_data, [[maybe_unused]] void* user_data) {
 
-    vk::DebugUtilsMessageSeverityFlagBitsEXT severity{severity_};
+    vk::DebugUtilsMessageSeverityFlagBitsEXT severity{static_cast<u32>(severity_)};
     if (severity == vk::DebugUtilsMessageSeverityFlagBitsEXT::eError) {
         SPDLOG_ERROR("{}", callback_data->pMessage);
     } else if (severity == vk::DebugUtilsMessageSeverityFlagBitsEXT::eWarning) {
@@ -120,6 +121,7 @@ void VulkanRenderer::Init(vk::SurfaceKHR surface_, const vk::Extent2D& actual_ex
     CreateGraphicsPipeline();
     CreateFramebuffers();
     CreateCommandBuffers();
+    CreateVertexBuffer();
     CreateSyncObjects();
 }
 
@@ -165,13 +167,13 @@ bool VulkanRenderer::CreateDevice() {
 
     const auto& queue_families = physical_device.getQueueFamilyProperties();
 
-    graphics_queue_family = present_queue_family = queue_families.size();
+    graphics_queue_family = present_queue_family = static_cast<u32>(queue_families.size());
     for (std::size_t i = 0; i < queue_families.size(); ++i) {
         if (queue_families[i].queueFlags & vk::QueueFlagBits::eGraphics) {
-            graphics_queue_family = i;
+            graphics_queue_family = static_cast<u32>(i);
         }
-        if (physical_device.getSurfaceSupportKHR(i, *surface)) {
-            present_queue_family = i;
+        if (physical_device.getSurfaceSupportKHR(static_cast<u32>(i), *surface)) {
+            present_queue_family = static_cast<u32>(i);
         }
     }
     if (graphics_queue_family == queue_families.size() ||
@@ -309,8 +311,15 @@ void VulkanRenderer::CreateRenderPass() {
         }};
 }
 
+struct Vertex {
+    glm::vec2 pos;
+    glm::vec3 color;
+};
+
 void VulkanRenderer::CreateGraphicsPipeline() {
     pipeline_layout = vk::raii::PipelineLayout{device, vk::PipelineLayoutCreateInfo{}};
+
+    static constexpr auto VertexAttributeDescriptions = AttributeDescriptionsFor<Vertex>();
 
     pipeline = vk::raii::Pipeline{
         device,
@@ -329,7 +338,16 @@ void VulkanRenderer::CreateGraphicsPipeline() {
                     .pName = "main",
                 },
             }},
-            .pVertexInputState = TempPtr{vk::PipelineVertexInputStateCreateInfo{}},
+            .pVertexInputState = TempPtr{vk::PipelineVertexInputStateCreateInfo{
+                .vertexBindingDescriptionCount = 1,
+                .pVertexBindingDescriptions = TempArr<vk::VertexInputBindingDescription>{{
+                    .binding = 0,
+                    .stride = sizeof(Vertex),
+                    .inputRate = vk::VertexInputRate::eVertex,
+                }},
+                .vertexAttributeDescriptionCount = VertexAttributeDescriptions.size(),
+                .pVertexAttributeDescriptions = VertexAttributeDescriptions.data(),
+            }},
             .pInputAssemblyState = TempPtr{vk::PipelineInputAssemblyStateCreateInfo{
                 .topology = vk::PrimitiveTopology::eTriangleList,
                 .primitiveRestartEnable = VK_FALSE,
@@ -399,6 +417,61 @@ void VulkanRenderer::CreateCommandBuffers() {
     }
 }
 
+void VulkanRenderer::CreateVertexBuffer() {
+    const std::vector<Vertex> vertices{{{-0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}},
+                                       {{0.5f, 0.5f}, {0.0f, 1.0f, 0.0f}},
+                                       {{0.0f, -0.5f}, {1.0f, 0.0f, 0.0f}}};
+
+    allocator = std::make_unique<VulkanAllocator>(*instance, *physical_device, *device);
+
+    const auto buffer_size = vertices.size() * sizeof(decltype(vertices)::value_type);
+    vertex_buffer = std::make_unique<VulkanBuffer>(
+        *allocator,
+        vk::BufferCreateInfo{
+            .size = buffer_size,
+            .usage = vk::BufferUsageFlagBits::eVertexBuffer | vk::BufferUsageFlagBits::eTransferDst,
+        },
+        VmaAllocationCreateInfo{
+            .usage = VMA_MEMORY_USAGE_AUTO,
+        });
+    vertex_staging_buffer = std::make_unique<VulkanBuffer>(
+        *allocator,
+        vk::BufferCreateInfo{
+            .size = buffer_size,
+            .usage = vk::BufferUsageFlagBits::eTransferSrc,
+        },
+        VmaAllocationCreateInfo{
+            .flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT |
+                     VMA_ALLOCATION_CREATE_MAPPED_BIT,
+            .usage = VMA_MEMORY_USAGE_AUTO,
+        });
+    std::memcpy(vertex_staging_buffer->allocation_info.pMappedData, vertices.data(), buffer_size);
+
+    // Upload staging buffer
+    vk::raii::CommandBuffers tmp_cmdbuf{device,
+                                        {
+                                            .commandPool = *command_pool,
+                                            .level = vk::CommandBufferLevel::ePrimary,
+                                            .commandBufferCount = 1,
+                                        }};
+
+    {
+        CommandBufferContext cmd_context{tmp_cmdbuf[0],
+                                         {.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit}};
+        tmp_cmdbuf[0].copyBuffer(vertex_staging_buffer->buffer, vertex_buffer->buffer,
+                                 {{
+                                     .size = buffer_size,
+                                 }});
+    }
+    graphics_queue.submit({
+        {
+            .commandBufferCount = 1,
+            .pCommandBuffers = TempArr<vk::CommandBuffer>{*tmp_cmdbuf[0]},
+        },
+    });
+    graphics_queue.waitIdle();
+}
+
 void VulkanRenderer::CreateSyncObjects() {
     for (auto& frame : frames_in_flight) {
         frame.image_available_semaphore = vk::raii::Semaphore{device, vk::SemaphoreCreateInfo{}};
@@ -412,7 +485,7 @@ void VulkanRenderer::CreateSyncObjects() {
 
 void VulkanRenderer::RecordCommands(vk::raii::CommandBuffer& command_buffer,
                                     std::size_t image_index) {
-    CommandBufferContext context{command_buffer, {}};
+    CommandBufferContext cmd_context{command_buffer, {}};
 
     CommandBufferRenderPassContext render_pass_context{
         command_buffer,
@@ -433,6 +506,7 @@ void VulkanRenderer::RecordCommands(vk::raii::CommandBuffer& command_buffer,
         vk::SubpassContents::eInline};
 
     command_buffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *pipeline);
+    command_buffer.bindVertexBuffers(0, {vertex_buffer->buffer}, {0});
 
     // Dynamic states
     command_buffer.setViewport(0, {{

@@ -7,8 +7,11 @@
 #include <memory>
 #include <utility>
 #include <vector>
+#include <glm/glm.hpp>
 #include <vulkan/vulkan_raii.hpp>
 #include "common/common_types.h"
+#include "core/renderer/vulkan_allocator.h"
+#include "core/renderer/vulkan_buffer.h"
 
 /**
  * Base class for Vulkan based renderers, managing the Vulkan objects.
@@ -36,6 +39,7 @@ private:
     void CreateGraphicsPipeline();
     void CreateFramebuffers();
     void CreateCommandBuffers();
+    void CreateVertexBuffer();
     void CreateSyncObjects();
     void RecordCommands(vk::raii::CommandBuffer& command_buffer, std::size_t image_index);
 
@@ -65,6 +69,10 @@ private:
     std::vector<vk::raii::Framebuffer> framebuffers;
 
     vk::raii::CommandPool command_pool = nullptr;
+    std::unique_ptr<VulkanAllocator> allocator{};
+    std::unique_ptr<VulkanBuffer> vertex_buffer{};
+    std::unique_ptr<VulkanBuffer> vertex_staging_buffer{};
+
     struct FrameInFlight {
         vk::raii::CommandBuffer command_buffer = nullptr;
         vk::raii::Semaphore image_available_semaphore = nullptr;

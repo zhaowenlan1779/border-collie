@@ -2,7 +2,6 @@
 // Licensed under GPLv2 or any later version
 // Refer to the license.txt file included.
 
-#include <functional>
 #include <memory>
 #include <utility>
 #include <spdlog/spdlog.h>
