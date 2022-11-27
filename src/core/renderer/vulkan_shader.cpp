@@ -5,6 +5,8 @@
 #include "common/file_util.h"
 #include "core/renderer/vulkan_shader.h"
 
+namespace Renderer {
+
 VulkanShader::VulkanShader(vk::raii::Device& device, const std::u8string_view& path) {
     const auto& code =
         Common::ReadFileContents(std::u8string{u8"shaders/"} + std::u8string{path} + u8".spv");
@@ -21,3 +23,5 @@ VulkanShader::~VulkanShader() = default;
 const vk::ShaderModule& VulkanShader::operator*() const {
     return *shader_module;
 }
+
+} // namespace Renderer

@@ -8,6 +8,11 @@ add_library(core STATIC
     renderer/vulkan_renderer.h
     renderer/vulkan_shader.cpp
     renderer/vulkan_shader.h
+    scene/materials/material.h
+    scene/object/mesh.h
+    scene/object/object.h
+    scene/primitive.h
+    scene/scene.h
 )
 target_shaders(core
     renderer/shaders/test.frag
@@ -15,4 +20,4 @@ target_shaders(core
 )
 
 target_link_libraries(core PUBLIC common Vulkan::Vulkan VulkanMemoryAllocator)
-target_link_libraries(core PRIVATE spdlog boost)
+target_link_libraries(core PRIVATE spdlog boost glm::glm)

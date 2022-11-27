@@ -9,6 +9,8 @@
 #include <utility>
 #include <vulkan/vulkan_raii.hpp>
 
+namespace Renderer {
+
 class VulkanShader {
 public:
     explicit VulkanShader(vk::raii::Device& device, const std::u8string_view& path);
@@ -19,3 +21,5 @@ public:
 private:
     vk::raii::ShaderModule shader_module = nullptr;
 };
+
+} // namespace Renderer

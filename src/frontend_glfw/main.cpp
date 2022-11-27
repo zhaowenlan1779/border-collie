@@ -22,7 +22,8 @@ static void OnFramebufferResized(GLFWwindow* window, int width, int height) {
     g_should_render = width != 0 && height != 0;
 
     if (g_should_render) {
-        auto* renderer = reinterpret_cast<VulkanRenderer*>(glfwGetWindowUserPointer(window));
+        auto* renderer =
+            reinterpret_cast<Renderer::VulkanRenderer*>(glfwGetWindowUserPointer(window));
         renderer->RecreateSwapchain({static_cast<u32>(width), static_cast<u32>(height)});
     }
 }
@@ -45,9 +46,9 @@ int main() {
         std::vector<const char*> extensions{extensions_raw, extensions_raw + extension_count};
 
 #ifdef NDEBUG
-        VulkanRenderer renderer{false, std::move(extensions)};
+        Renderer::VulkanRenderer renderer{false, std::move(extensions)};
 #else
-        VulkanRenderer renderer{true, std::move(extensions)};
+        Renderer::VulkanRenderer renderer{true, std::move(extensions)};
 #endif
 
         VkSurfaceKHR surface;

@@ -10,8 +10,13 @@
 #include <glm/glm.hpp>
 #include <vulkan/vulkan_raii.hpp>
 #include "common/common_types.h"
-#include "core/renderer/vulkan_allocator.h"
-#include "core/renderer/vulkan_buffer.h"
+
+namespace Renderer {
+
+class VulkanAllocator;
+class VulkanStagedBuffer;
+template <typename T>
+class VulkanUniformBufferObject;
 
 /**
  * Base class for Vulkan based renderers, managing the Vulkan objects.
@@ -33,15 +38,21 @@ private:
     void CreateInstance(bool enable_validation_layers,
                         const std::vector<const char*>& frontend_required_extensions);
     void InitDevice();
-    bool CreateDevice();
+    bool CreateDevice(vk::raii::PhysicalDevice& physical_device);
     void CreateSwapchain(const vk::Extent2D& actual_extent);
     void CreateRenderPass();
+    void CreateDescriptorSetLayout();
     void CreateGraphicsPipeline();
     void CreateFramebuffers();
     void CreateCommandBuffers();
-    void CreateVertexBuffer();
+    void CreateBuffers();
+    void CreateDescriptors();
     void CreateSyncObjects();
-    void RecordCommands(vk::raii::CommandBuffer& command_buffer, std::size_t image_index);
+
+    struct FrameInFlight;
+    void RecordCommands(FrameInFlight& frame, std::size_t image_index);
+    struct UniformBufferObject;
+    UniformBufferObject GetUniformBufferObject() const;
 
     vk::raii::Context context;
     vk::raii::Instance instance = nullptr;
@@ -63,6 +74,7 @@ private:
     std::vector<vk::raii::ImageView> image_views;
 
     vk::raii::RenderPass render_pass = nullptr;
+    vk::raii::DescriptorSetLayout descriptor_set_layout = nullptr;
     vk::raii::PipelineLayout pipeline_layout = nullptr;
     vk::raii::Pipeline pipeline = nullptr;
 
@@ -70,15 +82,20 @@ private:
 
     vk::raii::CommandPool command_pool = nullptr;
     std::unique_ptr<VulkanAllocator> allocator{};
-    std::unique_ptr<VulkanBuffer> vertex_buffer{};
-    std::unique_ptr<VulkanBuffer> vertex_staging_buffer{};
+    std::unique_ptr<VulkanStagedBuffer> vertex_buffer{};
+    std::unique_ptr<VulkanStagedBuffer> index_buffer{};
 
+    vk::raii::DescriptorPool descriptor_pool = nullptr;
     struct FrameInFlight {
         vk::raii::CommandBuffer command_buffer = nullptr;
         vk::raii::Semaphore image_available_semaphore = nullptr;
         vk::raii::Semaphore render_finished_semaphore = nullptr;
         vk::raii::Fence in_flight_fence = nullptr;
+        std::unique_ptr<VulkanUniformBufferObject<UniformBufferObject>> uniform_buffer{};
+        vk::raii::DescriptorSet descriptor_set = nullptr;
     };
     std::array<FrameInFlight, 2> frames_in_flight;
     std::size_t current_frame = 0;
 };
+
+} // namespace Renderer

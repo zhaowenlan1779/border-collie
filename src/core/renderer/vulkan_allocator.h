@@ -7,6 +7,8 @@
 #include <vk_mem_alloc.h>
 #include <vulkan/vulkan.hpp>
 
+namespace Renderer {
+
 /**
  * RAII wrapper around VmaAllocator
  */
@@ -18,6 +20,8 @@ public:
 
     VmaAllocator operator*() const;
 
-private:
     VmaAllocator allocator = nullptr;
+    vk::Device device = nullptr;
 };
+
+} // namespace Renderer

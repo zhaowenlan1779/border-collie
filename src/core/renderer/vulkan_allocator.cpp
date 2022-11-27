@@ -5,15 +5,14 @@
 #include "common/temp_ptr.h"
 #include "core/renderer/vulkan_allocator.h"
 
+namespace Renderer {
+
 VulkanAllocator::VulkanAllocator(vk::Instance instance, vk::PhysicalDevice physical_device,
-                                 vk::Device device) {
+                                 vk::Device device_)
+    : device(device_) {
     const auto result = vmaCreateAllocator(TempPtr{VmaAllocatorCreateInfo{
                                                .physicalDevice = physical_device,
                                                .device = device,
-                                               .pVulkanFunctions = TempPtr{VmaVulkanFunctions{
-                                                   .vkGetInstanceProcAddr = &vkGetInstanceProcAddr,
-                                                   .vkGetDeviceProcAddr = &vkGetDeviceProcAddr,
-                                               }},
                                                .instance = instance,
                                                .vulkanApiVersion = VK_API_VERSION_1_3,
                                            }},
@@ -30,3 +29,5 @@ VmaAllocator VulkanAllocator::operator*() const {
 VulkanAllocator::~VulkanAllocator() {
     vmaDestroyAllocator(allocator);
 }
+
+} // namespace Renderer

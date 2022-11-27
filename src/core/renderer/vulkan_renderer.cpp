@@ -4,14 +4,22 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <limits>
+#include <ranges>
 #include <set>
 #include <string_view>
+#include <glm/gtc/matrix_transform.hpp>
 #include <spdlog/spdlog.h>
+#include "common/ranges.h"
 #include "common/temp_ptr.h"
+#include "core/renderer/vulkan_allocator.h"
+#include "core/renderer/vulkan_buffer.h"
 #include "core/renderer/vulkan_helpers.hpp"
 #include "core/renderer/vulkan_renderer.h"
 #include "core/renderer/vulkan_shader.h"
+
+namespace Renderer {
 
 VulkanRenderer::VulkanRenderer(bool enable_validation_layers,
                                std::vector<const char*> frontend_required_extensions) {
@@ -53,14 +61,13 @@ void VulkanRenderer::CreateInstance(bool enable_validation_layers,
     }
 
     const auto& available_layers = context.enumerateInstanceLayerProperties();
-    const bool validation_available =
-        std::all_of(validation_layers.begin(), validation_layers.end(),
-                    [&available_layers](const std::string_view& layer_name) {
-                        return std::any_of(available_layers.begin(), available_layers.end(),
-                                           [&layer_name](const vk::LayerProperties& layer) {
-                                               return layer_name == layer.layerName;
-                                           });
-                    });
+    const bool validation_available = std::ranges::all_of(
+        validation_layers, [&available_layers](const std::string_view& layer_name) {
+            return std::ranges::any_of(available_layers,
+                                       [&layer_name](const vk::LayerProperties& layer) {
+                                           return layer_name == layer.layerName;
+                                       });
+        });
     if (!validation_available) {
         SPDLOG_CRITICAL("Some validation layers are not available");
         throw std::runtime_error("Some validation layers are not available");
@@ -118,85 +125,89 @@ void VulkanRenderer::Init(vk::SurfaceKHR surface_, const vk::Extent2D& actual_ex
     InitDevice();
     CreateSwapchain(actual_extent);
     CreateRenderPass();
+    CreateDescriptorSetLayout();
     CreateGraphicsPipeline();
     CreateFramebuffers();
     CreateCommandBuffers();
-    CreateVertexBuffer();
+    CreateBuffers();
+    CreateDescriptors();
     CreateSyncObjects();
 }
 
 void VulkanRenderer::InitDevice() {
-    const vk::raii::PhysicalDevices physical_devices{instance};
+    vk::raii::PhysicalDevices physical_devices{instance};
 
     // Prefer discrete GPUs
-    for (auto it : physical_devices) {
-        if (it.getProperties().deviceType == vk::PhysicalDeviceType::eDiscreteGpu) {
-            physical_device = it;
-            if (CreateDevice()) {
-                return;
-            }
-        }
+    const auto result =
+        std::ranges::find_if(physical_devices, [this](vk::raii::PhysicalDevice& it) {
+            return it.getProperties().deviceType == vk::PhysicalDeviceType::eDiscreteGpu &&
+                   CreateDevice(it);
+        });
+    if (result != physical_devices.end()) {
+        return;
     }
-    for (auto it : physical_devices) {
-        if (it.getProperties().deviceType != vk::PhysicalDeviceType::eDiscreteGpu) {
-            physical_device = it;
-            if (CreateDevice()) {
-                return;
-            }
-        }
+
+    // Try everything else
+    const auto result_2 =
+        std::ranges::find_if(physical_devices, [this](vk::raii::PhysicalDevice& it) {
+            return it.getProperties().deviceType != vk::PhysicalDeviceType::eDiscreteGpu &&
+                   CreateDevice(it);
+        });
+    if (result_2 == physical_devices.end()) {
+        throw std::runtime_error("Failed to create any device");
     }
-    throw std::runtime_error("Failed to create any device");
 }
 
-bool VulkanRenderer::CreateDevice() {
+bool VulkanRenderer::CreateDevice(vk::raii::PhysicalDevice& physical_device_) {
+    physical_device = std::move(physical_device_);
+
     // Check for extensions
     static constexpr std::array<const char*, 1> RequiredExtensions{{
         VK_KHR_SWAPCHAIN_EXTENSION_NAME,
     }};
 
     const auto& device_exts = physical_device.enumerateDeviceExtensionProperties();
-    for (const std::string_view ext_name : RequiredExtensions) {
-        const bool ext_supported = std::any_of(device_exts.begin(), device_exts.end(),
-                                               [&ext_name](const vk::ExtensionProperties& ext) {
-                                                   return ext_name == ext.extensionName;
-                                               });
-        if (!ext_supported) {
-            return false;
-        }
+    if (!std::ranges::all_of(RequiredExtensions, [&device_exts](const std::string_view ext_name) {
+            return std::ranges::any_of(device_exts,
+                                       [&ext_name](const vk::ExtensionProperties& ext) {
+                                           return ext_name == ext.extensionName;
+                                       });
+        })) {
+
+        return false;
     }
 
     const auto& queue_families = physical_device.getQueueFamilyProperties();
+    graphics_queue_family = *std::ranges::find_if(
+        std::ranges::iota_view<u32, u32>(0, queue_families.size()), [&queue_families](u32 i) {
+            return static_cast<bool>(queue_families[i].queueFlags & vk::QueueFlagBits::eGraphics);
+        });
+    present_queue_family = *std::ranges::find_if(
+        std::ranges::iota_view<u32, u32>(0, queue_families.size()),
+        [this](u32 i) { return physical_device.getSurfaceSupportKHR(i, *surface); });
 
-    graphics_queue_family = present_queue_family = static_cast<u32>(queue_families.size());
-    for (std::size_t i = 0; i < queue_families.size(); ++i) {
-        if (queue_families[i].queueFlags & vk::QueueFlagBits::eGraphics) {
-            graphics_queue_family = static_cast<u32>(i);
-        }
-        if (physical_device.getSurfaceSupportKHR(static_cast<u32>(i), *surface)) {
-            present_queue_family = static_cast<u32>(i);
-        }
-    }
     if (graphics_queue_family == queue_families.size() ||
         present_queue_family == queue_families.size()) {
         return false;
     }
 
     const std::set<u32> family_ids{graphics_queue_family, present_queue_family};
-    std::vector<vk::DeviceQueueCreateInfo> queues;
-    for (const u32 family_id : family_ids) {
-        queues.emplace_back(vk::DeviceQueueCreateInfo{
-            .queueFamilyIndex = family_id,
-            .queueCount = 1,
-            .pQueuePriorities = TempArr<float>{1.0f},
-        });
-    }
-
+    float priority = 1.0f;
     try {
         device = vk::raii::Device{
             physical_device,
             {
-                .queueCreateInfoCount = static_cast<u32>(queues.size()),
-                .pQueueCreateInfos = queues.data(),
+                .queueCreateInfoCount = static_cast<u32>(family_ids.size()),
+                .pQueueCreateInfos =
+                    Common::VectorFromRange(family_ids |
+                                            std::views::transform([&priority](u32 family_id) {
+                                                return vk::DeviceQueueCreateInfo{
+                                                    .queueFamilyIndex = family_id,
+                                                    .queueCount = 1,
+                                                    .pQueuePriorities = &priority,
+                                                };
+                                            }))
+                        .data(),
                 .enabledExtensionCount = static_cast<u32>(RequiredExtensions.size()),
                 .ppEnabledExtensionNames = RequiredExtensions.data(),
             }};
@@ -276,6 +287,20 @@ void VulkanRenderer::CreateSwapchain(const vk::Extent2D& actual_extent) {
     }
 }
 
+void VulkanRenderer::CreateDescriptorSetLayout() {
+    descriptor_set_layout =
+        vk::raii::DescriptorSetLayout{device,
+                                      {
+                                          .bindingCount = 1,
+                                          .pBindings = TempArr<vk::DescriptorSetLayoutBinding>{{
+                                              .binding = 0,
+                                              .descriptorType = vk::DescriptorType::eUniformBuffer,
+                                              .descriptorCount = 1,
+                                              .stageFlags = vk::ShaderStageFlagBits::eVertex,
+                                          }},
+                                      }};
+}
+
 void VulkanRenderer::CreateRenderPass() {
     render_pass = vk::raii::RenderPass{
         device,
@@ -317,10 +342,15 @@ struct Vertex {
 };
 
 void VulkanRenderer::CreateGraphicsPipeline() {
-    pipeline_layout = vk::raii::PipelineLayout{device, vk::PipelineLayoutCreateInfo{}};
+    pipeline_layout = vk::raii::PipelineLayout{device,
+                                               {
+                                                   .setLayoutCount = 1,
+                                                   .pSetLayouts = TempArr<vk::DescriptorSetLayout>{{
+                                                       *descriptor_set_layout,
+                                                   }},
+                                               }};
 
     static constexpr auto VertexAttributeDescriptions = AttributeDescriptionsFor<Vertex>();
-
     pipeline = vk::raii::Pipeline{
         device,
         VK_NULL_HANDLE,
@@ -417,37 +447,29 @@ void VulkanRenderer::CreateCommandBuffers() {
     }
 }
 
-void VulkanRenderer::CreateVertexBuffer() {
-    const std::vector<Vertex> vertices{{{-0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}},
-                                       {{0.5f, 0.5f}, {0.0f, 1.0f, 0.0f}},
-                                       {{0.0f, -0.5f}, {1.0f, 0.0f, 0.0f}}};
+struct VulkanRenderer::UniformBufferObject {
+    glm::mat4 model;
+    glm::mat4 view;
+    glm::mat4 proj;
+};
 
+void VulkanRenderer::CreateBuffers() {
     allocator = std::make_unique<VulkanAllocator>(*instance, *physical_device, *device);
 
-    const auto buffer_size = vertices.size() * sizeof(decltype(vertices)::value_type);
-    vertex_buffer = std::make_unique<VulkanBuffer>(
-        *allocator,
-        vk::BufferCreateInfo{
-            .size = buffer_size,
-            .usage = vk::BufferUsageFlagBits::eVertexBuffer | vk::BufferUsageFlagBits::eTransferDst,
-        },
-        VmaAllocationCreateInfo{
-            .usage = VMA_MEMORY_USAGE_AUTO,
-        });
-    vertex_staging_buffer = std::make_unique<VulkanBuffer>(
-        *allocator,
-        vk::BufferCreateInfo{
-            .size = buffer_size,
-            .usage = vk::BufferUsageFlagBits::eTransferSrc,
-        },
-        VmaAllocationCreateInfo{
-            .flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT |
-                     VMA_ALLOCATION_CREATE_MAPPED_BIT,
-            .usage = VMA_MEMORY_USAGE_AUTO,
-        });
-    std::memcpy(vertex_staging_buffer->allocation_info.pMappedData, vertices.data(), buffer_size);
+    const std::vector<Vertex> vertices{{{-0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}},
+                                       {{0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}},
+                                       {{0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}},
+                                       {{-0.5f, 0.5f}, {1.0f, 1.0f, 1.0f}}};
+    vertex_buffer = std::make_unique<VulkanStagedBuffer>(
+        *allocator, reinterpret_cast<const u8*>(vertices.data()),
+        vertices.size() * sizeof(vertices[0]), vk::BufferUsageFlagBits::eVertexBuffer);
 
-    // Upload staging buffer
+    const std::vector<u16> indices = {0, 1, 2, 2, 3, 0};
+    index_buffer = std::make_unique<VulkanStagedBuffer>(
+        *allocator, reinterpret_cast<const u8*>(indices.data()),
+        indices.size() * sizeof(indices[0]), vk::BufferUsageFlagBits::eIndexBuffer);
+
+    // Upload staging buffers
     vk::raii::CommandBuffers tmp_cmdbuf{device,
                                         {
                                             .commandPool = *command_pool,
@@ -458,10 +480,8 @@ void VulkanRenderer::CreateVertexBuffer() {
     {
         CommandBufferContext cmd_context{tmp_cmdbuf[0],
                                          {.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit}};
-        tmp_cmdbuf[0].copyBuffer(vertex_staging_buffer->buffer, vertex_buffer->buffer,
-                                 {{
-                                     .size = buffer_size,
-                                 }});
+        vertex_buffer->Upload(cmd_context);
+        index_buffer->Upload(cmd_context);
     }
     graphics_queue.submit({
         {
@@ -469,7 +489,52 @@ void VulkanRenderer::CreateVertexBuffer() {
             .pCommandBuffers = TempArr<vk::CommandBuffer>{*tmp_cmdbuf[0]},
         },
     });
+
+    for (auto& frame : frames_in_flight) {
+        frame.uniform_buffer = std::make_unique<VulkanUniformBufferObject<UniformBufferObject>>(
+            *allocator, vk::PipelineStageFlagBits2::eVertexShader);
+    }
+
     graphics_queue.waitIdle();
+}
+
+void VulkanRenderer::CreateDescriptors() {
+    descriptor_pool = vk::raii::DescriptorPool{
+        device,
+        {
+            .maxSets = static_cast<u32>(frames_in_flight.size()),
+            .poolSizeCount = 1,
+            .pPoolSizes = TempArr<vk::DescriptorPoolSize>{{
+                .type = vk::DescriptorType::eUniformBuffer,
+                .descriptorCount = static_cast<u32>(frames_in_flight.size()),
+            }},
+        }};
+
+    vk::raii::DescriptorSets descriptor_sets{
+        device,
+        {
+            .descriptorPool = *descriptor_pool,
+            .descriptorSetCount = static_cast<u32>(frames_in_flight.size()),
+            .pSetLayouts = std::vector{frames_in_flight.size(), *descriptor_set_layout}.data(),
+        }};
+    for (std::size_t i = 0; i < frames_in_flight.size(); ++i) {
+        frames_in_flight[i].descriptor_set = std::move(descriptor_sets[i]);
+    }
+    device.updateDescriptorSets(
+        WRAPPED_RANGE(frames_in_flight | std::views::transform([](const FrameInFlight& frame) {
+                          return TempWrapper<ArrSpec<&vk::WriteDescriptorSet::pBufferInfo,
+                                                     &vk::WriteDescriptorSet::descriptorCount>>{
+                              {.dstSet = *frame.descriptor_set,
+                               .dstBinding = 0,
+                               .descriptorCount = 1,
+                               .descriptorType = vk::DescriptorType::eUniformBuffer,
+                               .pBufferInfo = TempArr<vk::DescriptorBufferInfo>{{
+                                   .buffer = frame.uniform_buffer->dst_buffer.buffer,
+                                   .offset = 0,
+                                   .range = VK_WHOLE_SIZE,
+                               }}}};
+                      })),
+        {});
 }
 
 void VulkanRenderer::CreateSyncObjects() {
@@ -483,12 +548,14 @@ void VulkanRenderer::CreateSyncObjects() {
     }
 }
 
-void VulkanRenderer::RecordCommands(vk::raii::CommandBuffer& command_buffer,
-                                    std::size_t image_index) {
-    CommandBufferContext cmd_context{command_buffer, {}};
+void VulkanRenderer::RecordCommands(FrameInFlight& frame, std::size_t image_index) {
+    const auto& cmd = frame.command_buffer;
+
+    CommandBufferContext cmd_context{cmd, {}};
+    frame.uniform_buffer->Upload(cmd_context);
 
     CommandBufferRenderPassContext render_pass_context{
-        command_buffer,
+        cmd,
         {
             .renderPass = *render_pass,
             .framebuffer = *framebuffers[image_index],
@@ -505,24 +572,46 @@ void VulkanRenderer::RecordCommands(vk::raii::CommandBuffer& command_buffer,
         },
         vk::SubpassContents::eInline};
 
-    command_buffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *pipeline);
-    command_buffer.bindVertexBuffers(0, {vertex_buffer->buffer}, {0});
+    cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *pipeline);
+    cmd.bindVertexBuffers(0, {**vertex_buffer}, {0});
+    cmd.bindIndexBuffer(**index_buffer, 0, vk::IndexType::eUint16);
 
     // Dynamic states
-    command_buffer.setViewport(0, {{
-                                      .x = 0.0f,
-                                      .y = 0.0f,
-                                      .width = static_cast<float>(extent.width),
-                                      .height = static_cast<float>(extent.height),
-                                      .minDepth = 0.0f,
-                                      .maxDepth = 1.0f,
-                                  }});
-    command_buffer.setScissor(0, {{
-                                     .offset = {},
-                                     .extent = extent,
-                                 }});
+    cmd.setViewport(0, {{
+                           .x = 0.0f,
+                           .y = 0.0f,
+                           .width = static_cast<float>(extent.width),
+                           .height = static_cast<float>(extent.height),
+                           .minDepth = 0.0f,
+                           .maxDepth = 1.0f,
+                       }});
+    cmd.setScissor(0, {{
+                          .offset = {},
+                          .extent = extent,
+                      }});
 
-    command_buffer.draw(3, 1, 0, 0);
+    cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *pipeline_layout, 0,
+                           {*frame.descriptor_set}, {});
+    cmd.drawIndexed(6, 1, 0, 0, 0);
+}
+
+VulkanRenderer::UniformBufferObject VulkanRenderer::GetUniformBufferObject() const {
+    static auto startTime = std::chrono::high_resolution_clock::now();
+
+    const auto currentTime = std::chrono::high_resolution_clock::now();
+    const float time =
+        std::chrono::duration<float, std::chrono::seconds::period>(currentTime - startTime).count();
+
+    auto proj = glm::perspective(glm::radians(45.0f),
+                                 extent.width / static_cast<float>(extent.height), 0.1f, 10.0f);
+    proj[1][1] *= -1;
+    return {
+        .model =
+            glm::rotate(glm::mat4(1.0f), time * glm::radians(90.0f), glm::vec3(0.0f, 0.0f, 1.0f)),
+        .view = glm::lookAt(glm::vec3(2.0f, 2.0f, 2.0f), glm::vec3(0.0f, 0.0f, 0.0f),
+                            glm::vec3(0.0f, 0.0f, 1.0f)),
+        .proj = proj,
+    };
 }
 
 void VulkanRenderer::DrawFrame() {
@@ -544,8 +633,12 @@ void VulkanRenderer::DrawFrame() {
 
     device.resetFences({*frame.in_flight_fence});
 
+    // Update uniform buffer
+    frame.uniform_buffer->Update(GetUniformBufferObject());
+
     frame.command_buffer.reset();
-    RecordCommands(frame.command_buffer, image_index);
+    RecordCommands(frame, image_index);
+
     graphics_queue.submit(
         {{.waitSemaphoreCount = 1,
           .pWaitSemaphores = TempArr<vk::Semaphore>{*frame.image_available_semaphore},
@@ -577,3 +670,5 @@ void VulkanRenderer::RecreateSwapchain(const vk::Extent2D& actual_extent) {
     CreateSwapchain(actual_extent);
     CreateFramebuffers();
 }
+
+} // namespace Renderer

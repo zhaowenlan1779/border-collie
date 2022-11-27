@@ -5,16 +5,20 @@
 #pragma once
 
 #include <memory>
+#include <type_traits>
 #include <utility>
 #include <boost/pfr.hpp>
 #include <glm/glm.hpp>
 #include <vulkan/vulkan_raii.hpp>
+#include "common/alignment.h"
 #include "common/common_types.h"
+
+namespace Renderer {
 
 // RAII helpers
 
 struct CommandBufferContext {
-    explicit CommandBufferContext(vk::raii::CommandBuffer& command_buffer_,
+    explicit CommandBufferContext(const vk::raii::CommandBuffer& command_buffer_,
                                   const vk::CommandBufferBeginInfo& begin_info)
         : command_buffer(command_buffer_) {
 
@@ -25,11 +29,11 @@ struct CommandBufferContext {
         command_buffer.end();
     }
 
-    vk::raii::CommandBuffer& command_buffer;
+    const vk::raii::CommandBuffer& command_buffer;
 };
 
 struct CommandBufferRenderPassContext {
-    explicit CommandBufferRenderPassContext(vk::raii::CommandBuffer& command_buffer_,
+    explicit CommandBufferRenderPassContext(const vk::raii::CommandBuffer& command_buffer_,
                                             const vk::RenderPassBeginInfo& begin_info,
                                             vk::SubpassContents contents)
         : command_buffer(command_buffer_) {
@@ -41,7 +45,7 @@ struct CommandBufferRenderPassContext {
         command_buffer.endRenderPass();
     }
 
-    vk::raii::CommandBuffer& command_buffer;
+    const vk::raii::CommandBuffer& command_buffer;
 };
 
 // Attributes helpers
@@ -119,26 +123,155 @@ AttributeDescriptionsFor() {
         std::make_index_sequence<boost::pfr::tuple_size_v<T>>());
 }
 
-namespace detail::test {
-struct Vertex {
-    glm::vec2 pos;
-    glm::vec3 color;
+// std140 Alignment checker
+
+namespace detail {
+
+// Scalars
+// More like "is GLSL-usable scalar"
+template <typename T>
+constexpr bool IsScalar = false;
+template <>
+constexpr bool IsScalar<bool> = true;
+template <>
+constexpr bool IsScalar<float> = true;
+template <>
+constexpr bool IsScalar<double> = true;
+template <>
+constexpr bool IsScalar<s32> = true;
+template <>
+constexpr bool IsScalar<u32> = true;
+
+struct Alignment {
+    std::size_t Alignment;
+    std::size_t Size;
 };
 
-// Small testbench
-static_assert(AttributeDescriptionsFor<Vertex>() ==
-              std::array<vk::VertexInputAttributeDescription, 2>{{
-                  {
-                      .location = 0,
-                      .binding = 0,
-                      .format = vk::Format::eR32G32Sfloat,
-                      .offset = offsetof(Vertex, pos),
-                  },
-                  {
-                      .location = 1,
-                      .binding = 0,
-                      .format = vk::Format::eR32G32B32Sfloat,
-                      .offset = offsetof(Vertex, color),
-                  },
-              }});
-} // namespace detail::test
+template <typename T>
+consteval Alignment CalculateAlignment(T);
+
+// Vectors
+template <glm::length_t L, typename T, glm::qualifier Q>
+consteval Alignment CalculateAlignment(glm::vec<L, T, Q>) {
+    const auto& ScalarAlignment = CalculateAlignment(T{});
+    if (L == 2) {
+        return {ScalarAlignment.Alignment * 2, ScalarAlignment.Size * 2};
+    } else {
+        return {ScalarAlignment.Alignment * 4, ScalarAlignment.Size * 4};
+    }
+}
+
+// Arrays
+template <typename T>
+consteval Alignment CalculateAlignment(T[]) {
+    throw "Raw arrays are prohibited because boost::pfr does not support them";
+}
+
+template <typename T, std::size_t N>
+consteval Alignment CalculateAlignment(std::array<T, N>) {
+    const std::size_t ElementAlignment = Common::AlignUp(CalculateAlignment(T{}).Alignment, 16);
+    static_assert(Common::AlignUp(sizeof(T), alignof(T)) % ElementAlignment == 0,
+                  "Element type does not satisfy array stride requirements");
+
+    return {
+        .Alignment = ElementAlignment,
+        .Size = ElementAlignment * N,
+    };
+}
+
+// Matrices
+template <glm::length_t C, glm::length_t R, typename T, glm::qualifier Q>
+consteval Alignment CalculateAlignment(glm::mat<C, R, T, Q>) {
+    return CalculateAlignment(std::array<glm::vec<R, T, Q>, C>{});
+}
+
+// Structures
+template <typename T, std::size_t... Idxs>
+consteval Alignment StructureAlignmentImpl(std::index_sequence<Idxs...>) {
+    return {
+        .Alignment = Common::AlignUp(
+            std::max({CalculateAlignment(boost::pfr::tuple_element_t<Idxs, T>{}).Alignment...}),
+            16),
+        .Size = Common::AlignUp(
+            (CalculateAlignment(boost::pfr::tuple_element_t<Idxs, T>{}).Size + ...), 16),
+    };
+}
+
+template <typename T>
+consteval Alignment CalculateAlignment(T) {
+    if (IsScalar<T>) {
+        return {sizeof(T), sizeof(T)};
+    }
+    if (!std::is_aggregate_v<T>) {
+        throw "Unsupported type!";
+    }
+    static_assert(boost::pfr::tuple_size_v<T> != 0, "Empty structures are not supported");
+    return StructureAlignmentImpl<T>(std::make_index_sequence<boost::pfr::tuple_size_v<T>>());
+}
+
+template <typename T>
+consteval bool VerifyAlignmentSingle(T);
+
+template <glm::length_t L, typename T, glm::qualifier Q>
+consteval bool VerifyAlignmentSingle(glm::vec<L, T, Q>) {
+    return true;
+}
+
+template <typename T>
+consteval bool VerifyAlignmentSingle(T[]) {
+    throw "Raw arrays are prohibited because boost::pfr does not support them";
+}
+
+template <typename T, std::size_t N>
+consteval bool VerifyAlignmentSingle(std::array<T, N>) {
+    return VerifyAlignmentSingle(T{});
+}
+
+template <glm::length_t C, glm::length_t R, typename T, glm::qualifier Q>
+consteval bool VerifyAlignmentSingle(glm::mat<C, R, T, Q>) {
+    return true;
+}
+
+// Verifies alignment requirements for a structure and its members.
+// Does not verify sub-structures.
+template <typename T, std::size_t... Idxs>
+consteval bool VerifyAlignmentSingleStructureImpl(std::index_sequence<Idxs...>) {
+    const std::array<Alignment, sizeof...(Idxs)>& Alignments = {
+        CalculateAlignment(boost::pfr::tuple_element_t<Idxs, T>{})...};
+    const std::array<std::size_t, sizeof...(Idxs)>& Offsets = {OffsetOf<T, Idxs>()...};
+
+    std::size_t expected_offset = 0;
+    for (std::size_t i = 0; i < sizeof...(Idxs); ++i) {
+        expected_offset = Common::AlignUp(expected_offset, Alignments[i].Alignment);
+        if (Offsets[i] != expected_offset) {
+            return false;
+        }
+        expected_offset += Alignments[i].Size;
+    }
+    return expected_offset == sizeof(T);
+}
+
+template <typename T>
+consteval bool VerifyAlignmentSingle(T) {
+    if (IsScalar<T>) {
+        return true;
+    }
+    return VerifyAlignmentSingleStructureImpl<T>(
+        std::make_index_sequence<boost::pfr::tuple_size_v<T>>());
+}
+
+// Verifies alignment requirements for the structure itself and sub-structures.
+template <typename T, std::size_t... Idxs>
+consteval bool VerifyAlignmentImpl(std::index_sequence<Idxs...>) {
+    return VerifyAlignmentSingle(T{}) &&
+           (... && VerifyAlignmentSingle(boost::pfr::tuple_element_t<Idxs, T>{}));
+}
+
+} // namespace detail
+
+template <typename T>
+consteval bool VerifyLayoutStd140() {
+    return detail::VerifyAlignmentImpl<T>(std::make_index_sequence<boost::pfr::tuple_size_v<T>>());
+}
+
+} // namespace Renderer
