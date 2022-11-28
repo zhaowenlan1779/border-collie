@@ -7,6 +7,11 @@ layout(binding = 0) uniform UniformBufferObject {
 }
 ubo;
 
+layout(push_constant) uniform constants {
+    mat4 transformation;
+}
+push_constants;
+
 layout(location = 0) in vec2 inPosition;
 layout(location = 1) in vec3 inColor;
 

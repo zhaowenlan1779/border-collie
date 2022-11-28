@@ -154,7 +154,7 @@ consteval Alignment CalculateAlignment(T);
 template <glm::length_t L, typename T, glm::qualifier Q>
 consteval Alignment CalculateAlignment(glm::vec<L, T, Q>) {
     const auto& ScalarAlignment = CalculateAlignment(T{});
-    if (L == 2) {
+    if constexpr (L == 2) {
         return {ScalarAlignment.Alignment * 2, ScalarAlignment.Size * 2};
     } else {
         return {ScalarAlignment.Alignment * 4, ScalarAlignment.Size * 4};
@@ -165,6 +165,7 @@ consteval Alignment CalculateAlignment(glm::vec<L, T, Q>) {
 template <typename T>
 consteval Alignment CalculateAlignment(T[]) {
     throw "Raw arrays are prohibited because boost::pfr does not support them";
+    return {};
 }
 
 template <typename T, std::size_t N>
@@ -199,10 +200,10 @@ consteval Alignment StructureAlignmentImpl(std::index_sequence<Idxs...>) {
 
 template <typename T>
 consteval Alignment CalculateAlignment(T) {
-    if (IsScalar<T>) {
+    if constexpr (IsScalar<T>) {
         return {sizeof(T), sizeof(T)};
     }
-    if (!std::is_aggregate_v<T>) {
+    if constexpr (!std::is_aggregate_v<T>) {
         throw "Unsupported type!";
     }
     static_assert(boost::pfr::tuple_size_v<T> != 0, "Empty structures are not supported");
@@ -220,6 +221,7 @@ consteval bool VerifyAlignmentSingle(glm::vec<L, T, Q>) {
 template <typename T>
 consteval bool VerifyAlignmentSingle(T[]) {
     throw "Raw arrays are prohibited because boost::pfr does not support them";
+    return false;
 }
 
 template <typename T, std::size_t N>
@@ -253,7 +255,7 @@ consteval bool VerifyAlignmentSingleStructureImpl(std::index_sequence<Idxs...>) 
 
 template <typename T>
 consteval bool VerifyAlignmentSingle(T) {
-    if (IsScalar<T>) {
+    if constexpr (IsScalar<T>) {
         return true;
     }
     return VerifyAlignmentSingleStructureImpl<T>(

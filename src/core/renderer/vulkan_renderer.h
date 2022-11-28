@@ -53,6 +53,7 @@ private:
     void RecordCommands(FrameInFlight& frame, std::size_t image_index);
     struct UniformBufferObject;
     UniformBufferObject GetUniformBufferObject() const;
+    glm::mat4 GetPushConstant() const;
 
     vk::raii::Context context;
     vk::raii::Instance instance = nullptr;

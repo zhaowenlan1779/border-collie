@@ -5,20 +5,20 @@
 #pragma once
 
 #include <cstring>
-#include <optional>
+#include <memory>
 #include <vulkan/vulkan.hpp>
 #include "common/common_types.h"
 #include "core/renderer/vulkan_helpers.hpp"
 
 namespace Renderer {
 
-class CommandBufferContext;
+struct CommandBufferContext;
 class VulkanAllocator;
 
 /**
  * RAII wrapper for VMA buffer allocations.
  */
-class VulkanBuffer {
+class VulkanBuffer : NonCopyable {
 public:
     explicit VulkanBuffer(VulkanAllocator& allocator,
                           const vk::BufferCreateInfo& buffer_create_info,
@@ -34,7 +34,7 @@ public:
 /**
  * One-use upload buffer, e.g. vertex/index buffer
  */
-class VulkanStagedBuffer {
+class VulkanStagedBuffer : NonCopyable {
 public:
     explicit VulkanStagedBuffer(VulkanAllocator& allocator, const u8* data, std::size_t size,
                                 vk::BufferUsageFlags usage);
@@ -47,7 +47,7 @@ public:
     VulkanBuffer src_buffer;
 };
 
-class VulkanUniformBuffer {
+class VulkanUniformBuffer : NonCopyable {
 public:
     explicit VulkanUniformBuffer(VulkanAllocator& allocator, std::size_t size);
     ~VulkanUniformBuffer();
@@ -57,7 +57,7 @@ public:
 
     VulkanAllocator& allocator;
     VulkanBuffer dst_buffer;
-    std::optional<VulkanBuffer> src_buffer;
+    std::unique_ptr<VulkanBuffer> src_buffer;
 };
 
 template <typename T>

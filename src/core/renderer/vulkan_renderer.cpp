@@ -177,13 +177,22 @@ bool VulkanRenderer::CreateDevice(vk::raii::PhysicalDevice& physical_device_) {
         return false;
     }
 
+    // Features
+    const auto& features =
+        physical_device
+            .getFeatures2<vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceVulkan13Features>();
+    if (!features.get<vk::PhysicalDeviceVulkan13Features>().synchronization2) {
+        return false;
+    }
+
     const auto& queue_families = physical_device.getQueueFamilyProperties();
     graphics_queue_family = *std::ranges::find_if(
-        std::ranges::iota_view<u32, u32>(0, queue_families.size()), [&queue_families](u32 i) {
+        std::ranges::iota_view<u32, u32>(0, static_cast<u32>(queue_families.size())),
+        [&queue_families](u32 i) {
             return static_cast<bool>(queue_families[i].queueFlags & vk::QueueFlagBits::eGraphics);
         });
     present_queue_family = *std::ranges::find_if(
-        std::ranges::iota_view<u32, u32>(0, queue_families.size()),
+        std::ranges::iota_view<u32, u32>(0, static_cast<u32>(queue_families.size())),
         [this](u32 i) { return physical_device.getSurfaceSupportKHR(i, *surface); });
 
     if (graphics_queue_family == queue_families.size() ||
@@ -197,6 +206,7 @@ bool VulkanRenderer::CreateDevice(vk::raii::PhysicalDevice& physical_device_) {
         device = vk::raii::Device{
             physical_device,
             {
+                .pNext = &features.get<vk::PhysicalDeviceFeatures2>(),
                 .queueCreateInfoCount = static_cast<u32>(family_ids.size()),
                 .pQueueCreateInfos =
                     Common::VectorFromRange(family_ids |
@@ -342,13 +352,20 @@ struct Vertex {
 };
 
 void VulkanRenderer::CreateGraphicsPipeline() {
-    pipeline_layout = vk::raii::PipelineLayout{device,
-                                               {
-                                                   .setLayoutCount = 1,
-                                                   .pSetLayouts = TempArr<vk::DescriptorSetLayout>{{
-                                                       *descriptor_set_layout,
-                                                   }},
-                                               }};
+    pipeline_layout =
+        vk::raii::PipelineLayout{device,
+                                 {
+                                     .setLayoutCount = 1,
+                                     .pSetLayouts = TempArr<vk::DescriptorSetLayout>{{
+                                         *descriptor_set_layout,
+                                     }},
+                                     .pushConstantRangeCount = 1,
+                                     .pPushConstantRanges = TempArr<vk::PushConstantRange>{{
+                                         .stageFlags = vk::ShaderStageFlagBits::eVertex,
+                                         .offset = 0,
+                                         .size = sizeof(glm::mat4),
+                                     }},
+                                 }};
 
     static constexpr auto VertexAttributeDescriptions = AttributeDescriptionsFor<Vertex>();
     pipeline = vk::raii::Pipeline{
@@ -592,6 +609,8 @@ void VulkanRenderer::RecordCommands(FrameInFlight& frame, std::size_t image_inde
 
     cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *pipeline_layout, 0,
                            {*frame.descriptor_set}, {});
+    cmd.pushConstants<glm::mat4>(*pipeline_layout, vk::ShaderStageFlagBits::eVertex, 0,
+                                 {GetPushConstant()});
     cmd.drawIndexed(6, 1, 0, 0, 0);
 }
 
@@ -612,6 +631,23 @@ VulkanRenderer::UniformBufferObject VulkanRenderer::GetUniformBufferObject() con
                             glm::vec3(0.0f, 0.0f, 1.0f)),
         .proj = proj,
     };
+}
+
+glm::mat4 VulkanRenderer::GetPushConstant() const {
+    static auto startTime = std::chrono::high_resolution_clock::now();
+
+    const auto currentTime = std::chrono::high_resolution_clock::now();
+    const float time =
+        std::chrono::duration<float, std::chrono::seconds::period>(currentTime - startTime).count();
+
+    auto proj = glm::perspective(glm::radians(45.0f),
+                                 extent.width / static_cast<float>(extent.height), 0.1f, 10.0f);
+    proj[1][1] *= -1;
+
+    return proj *
+           glm::lookAt(glm::vec3(2.0f, 2.0f, 2.0f), glm::vec3(0.0f, 0.0f, 0.0f),
+                       glm::vec3(0.0f, 0.0f, 1.0f)) *
+           glm::rotate(glm::mat4(1.0f), time * glm::radians(90.0f), glm::vec3(0.0f, 0.0f, 1.0f));
 }
 
 void VulkanRenderer::DrawFrame() {

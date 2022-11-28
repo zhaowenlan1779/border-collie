@@ -83,24 +83,24 @@ VulkanUniformBuffer::VulkanUniformBuffer(VulkanAllocator& allocator_, std::size_
     vmaGetAllocationMemoryProperties(*allocator, dst_buffer.allocation, &mem_props);
 
     if (!(mem_props & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT)) {
-        src_buffer =
-            VulkanBuffer{allocator,
-                         {
-                             .size = size,
-                             .usage = vk::BufferUsageFlagBits::eTransferSrc,
-                         },
-                         {
-                             .flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT |
-                                      VMA_ALLOCATION_CREATE_MAPPED_BIT,
-                             .usage = VMA_MEMORY_USAGE_AUTO,
-                         }};
+        src_buffer = std::make_unique<VulkanBuffer>(
+            allocator,
+            vk::BufferCreateInfo{
+                .size = size,
+                .usage = vk::BufferUsageFlagBits::eTransferSrc,
+            },
+            VmaAllocationCreateInfo{
+                .flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT |
+                         VMA_ALLOCATION_CREATE_MAPPED_BIT,
+                .usage = VMA_MEMORY_USAGE_AUTO,
+            });
     }
 }
 
 VulkanUniformBuffer::~VulkanUniformBuffer() = default;
 
 void* VulkanUniformBuffer::operator*() const {
-    if (src_buffer.has_value()) {
+    if (src_buffer) {
         return src_buffer->allocation_info.pMappedData;
     } else {
         return dst_buffer.allocation_info.pMappedData;
@@ -110,11 +110,10 @@ void* VulkanUniformBuffer::operator*() const {
 void VulkanUniformBuffer::Upload(const CommandBufferContext& context,
                                  vk::PipelineStageFlags2 dst_stage_mask) {
 
-    const auto& allocation =
-        src_buffer.has_value() ? src_buffer->allocation : dst_buffer.allocation;
+    const auto& allocation = src_buffer ? src_buffer->allocation : dst_buffer.allocation;
     vmaFlushAllocation(allocator.allocator, allocation, 0, VK_WHOLE_SIZE);
 
-    if (!src_buffer.has_value()) {
+    if (!src_buffer) {
         return;
     }
 
@@ -129,6 +128,8 @@ void VulkanUniformBuffer::Upload(const CommandBufferContext& context,
             .srcAccessMask = vk::AccessFlagBits2::eTransferWrite,
             .dstStageMask = dst_stage_mask,
             .dstAccessMask = vk::AccessFlagBits2::eUniformRead,
+            .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+            .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
             .buffer = dst_buffer.buffer,
             .offset = 0,
             .size = dst_buffer.allocation_info.size,

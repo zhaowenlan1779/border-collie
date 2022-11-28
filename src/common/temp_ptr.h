@@ -48,18 +48,6 @@ private:
 
 namespace detail {
 
-// template <typename T, typename U, std::size_t... Idxs>
-// consteval std::size_t IndexOfTypeImpl(std::index_sequence<Idxs...>) {
-//     return std::min({(std::is_same_v<U, boost::pfr::tuple_element_t<Idxs, T>>
-//                           ? Idxs
-//                           : std::numeric_limits<std::size_t>::max())...});
-// }
-
-// template <typename T, typename U>
-// consteval std::size_t IndexOfType() {
-//     return IndexOfTypeImpl<T, U>(std::make_index_sequence<boost::pfr::tuple_size_v<T>>());
-// }
-
 template <typename T>
 struct MemberPointerTraits {};
 
@@ -83,7 +71,7 @@ struct TempWrapperImpl {
 
 template <auto Ptr, auto Count, typename... As>
 struct TempWrapperImpl<ArrSpec<Ptr, Count>, As...> {
-    using Class = MemberPointerTraits<decltype(Ptr)>::Class;
+    using Class = typename MemberPointerTraits<decltype(Ptr)>::Class;
     static_assert(std::is_same_v<Class, typename MemberPointerTraits<decltype(Count)>::Class>);
     static_assert(sizeof...(As) == 0 ||
                   std::is_same_v<Class, typename TempWrapperImpl<As...>::Class>);
@@ -115,7 +103,7 @@ struct TempWrapperImpl<ArrSpec<Ptr, Count>, As...> {
  */
 template <typename... ArrSpecs>
 class TempWrapper {
-    using T = detail::TempWrapperImpl<ArrSpecs...>::Class;
+    using T = typename detail::TempWrapperImpl<ArrSpecs...>::Class;
 
 public:
     using ValueType = T;
