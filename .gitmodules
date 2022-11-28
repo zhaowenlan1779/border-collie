@@ -10,3 +10,6 @@
 [submodule "VulkanMemoryAllocator"]
 	path = externals/VulkanMemoryAllocator
 	url = git@github.com:GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator.git
+[submodule "stb"]
+	path = externals/stb/stb
+	url = git@github.com:nothings/stb.git
