@@ -18,6 +18,7 @@
 #include "core/renderer/vulkan_helpers.hpp"
 #include "core/renderer/vulkan_renderer.h"
 #include "core/renderer/vulkan_shader.h"
+#include "core/renderer/vulkan_texture.h"
 
 namespace Renderer {
 
@@ -130,6 +131,7 @@ void VulkanRenderer::Init(vk::SurfaceKHR surface_, const vk::Extent2D& actual_ex
     CreateFramebuffers();
     CreateCommandBuffers();
     CreateBuffers();
+    CreateTexture();
     CreateDescriptors();
     CreateSyncObjects();
 }
@@ -181,7 +183,9 @@ bool VulkanRenderer::CreateDevice(vk::raii::PhysicalDevice& physical_device_) {
     const auto& features =
         physical_device
             .getFeatures2<vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceVulkan13Features>();
-    if (!features.get<vk::PhysicalDeviceVulkan13Features>().synchronization2) {
+    if (!features.get<vk::PhysicalDeviceFeatures2>().features.samplerAnisotropy ||
+        !features.get<vk::PhysicalDeviceVulkan13Features>().synchronization2) {
+
         return false;
     }
 
@@ -206,7 +210,16 @@ bool VulkanRenderer::CreateDevice(vk::raii::PhysicalDevice& physical_device_) {
         device = vk::raii::Device{
             physical_device,
             {
-                .pNext = &features.get<vk::PhysicalDeviceFeatures2>(),
+                .pNext = &vk::StructureChain{vk::PhysicalDeviceFeatures2{
+                                                 .features =
+                                                     {
+                                                         .samplerAnisotropy = VK_TRUE,
+                                                     },
+                                             },
+                                             vk::PhysicalDeviceVulkan13Features{
+                                                 .synchronization2 = VK_TRUE,
+                                             }}
+                              .get<vk::PhysicalDeviceFeatures2>(),
                 .queueCreateInfoCount = static_cast<u32>(family_ids.size()),
                 .pQueueCreateInfos =
                     Common::VectorFromRange(family_ids |
@@ -298,17 +311,26 @@ void VulkanRenderer::CreateSwapchain(const vk::Extent2D& actual_extent) {
 }
 
 void VulkanRenderer::CreateDescriptorSetLayout() {
-    descriptor_set_layout =
-        vk::raii::DescriptorSetLayout{device,
-                                      {
-                                          .bindingCount = 1,
-                                          .pBindings = TempArr<vk::DescriptorSetLayoutBinding>{{
-                                              .binding = 0,
-                                              .descriptorType = vk::DescriptorType::eUniformBuffer,
-                                              .descriptorCount = 1,
-                                              .stageFlags = vk::ShaderStageFlagBits::eVertex,
-                                          }},
-                                      }};
+    descriptor_set_layout = vk::raii::DescriptorSetLayout{
+        device,
+        {
+            .bindingCount = 2,
+            .pBindings =
+                TempArr<vk::DescriptorSetLayoutBinding>{
+                    {
+                        .binding = 0,
+                        .descriptorType = vk::DescriptorType::eUniformBuffer,
+                        .descriptorCount = 1,
+                        .stageFlags = vk::ShaderStageFlagBits::eVertex,
+                    },
+                    {
+                        .binding = 1,
+                        .descriptorType = vk::DescriptorType::eCombinedImageSampler,
+                        .descriptorCount = 1,
+                        .stageFlags = vk::ShaderStageFlagBits::eFragment,
+                    },
+                },
+        }};
 }
 
 void VulkanRenderer::CreateRenderPass() {
@@ -349,6 +371,7 @@ void VulkanRenderer::CreateRenderPass() {
 struct Vertex {
     glm::vec2 pos;
     glm::vec3 color;
+    glm::vec2 texCoord;
 };
 
 void VulkanRenderer::CreateGraphicsPipeline() {
@@ -471,60 +494,78 @@ struct VulkanRenderer::UniformBufferObject {
 };
 
 void VulkanRenderer::CreateBuffers() {
-    allocator = std::make_unique<VulkanAllocator>(*instance, *physical_device, *device);
+    allocator = std::make_unique<VulkanAllocator>(instance, physical_device, device);
 
-    const std::vector<Vertex> vertices{{{-0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}},
-                                       {{0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}},
-                                       {{0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}},
-                                       {{-0.5f, 0.5f}, {1.0f, 1.0f, 1.0f}}};
-    vertex_buffer = std::make_unique<VulkanStagedBuffer>(
-        *allocator, reinterpret_cast<const u8*>(vertices.data()),
-        vertices.size() * sizeof(vertices[0]), vk::BufferUsageFlagBits::eVertexBuffer);
+    const std::vector<Vertex> vertices = {{{-0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}, {1.0f, 0.0f}},
+                                          {{0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f}},
+                                          {{0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}, {0.0f, 1.0f}},
+                                          {{-0.5f, 0.5f}, {1.0f, 1.0f, 1.0f}, {1.0f, 1.0f}}};
+    vertex_buffer = std::make_unique<VulkanImmUploadBuffer>(
+        *allocator, command_pool, graphics_queue,
+        VulkanImmUploadBufferCreateInfo{
+            .data = reinterpret_cast<const u8*>(vertices.data()),
+            .size = vertices.size() * sizeof(vertices[0]),
+            .usage = vk::BufferUsageFlagBits::eVertexBuffer,
+            .dst_stage_mask = vk::PipelineStageFlagBits2::eVertexAttributeInput,
+            .dst_access_mask = vk::AccessFlagBits2::eVertexAttributeRead,
+        });
 
     const std::vector<u16> indices = {0, 1, 2, 2, 3, 0};
-    index_buffer = std::make_unique<VulkanStagedBuffer>(
-        *allocator, reinterpret_cast<const u8*>(indices.data()),
-        indices.size() * sizeof(indices[0]), vk::BufferUsageFlagBits::eIndexBuffer);
-
-    // Upload staging buffers
-    vk::raii::CommandBuffers tmp_cmdbuf{device,
-                                        {
-                                            .commandPool = *command_pool,
-                                            .level = vk::CommandBufferLevel::ePrimary,
-                                            .commandBufferCount = 1,
-                                        }};
-
-    {
-        CommandBufferContext cmd_context{tmp_cmdbuf[0],
-                                         {.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit}};
-        vertex_buffer->Upload(cmd_context);
-        index_buffer->Upload(cmd_context);
-    }
-    graphics_queue.submit({
-        {
-            .commandBufferCount = 1,
-            .pCommandBuffers = TempArr<vk::CommandBuffer>{*tmp_cmdbuf[0]},
-        },
-    });
+    index_buffer = std::make_unique<VulkanImmUploadBuffer>(
+        *allocator, command_pool, graphics_queue,
+        VulkanImmUploadBufferCreateInfo{
+            .data = reinterpret_cast<const u8*>(indices.data()),
+            .size = indices.size() * sizeof(indices[0]),
+            .usage = vk::BufferUsageFlagBits::eIndexBuffer,
+            .dst_stage_mask = vk::PipelineStageFlagBits2::eIndexInput,
+            .dst_access_mask = vk::AccessFlagBits2::eIndexRead,
+        });
 
     for (auto& frame : frames_in_flight) {
         frame.uniform_buffer = std::make_unique<VulkanUniformBufferObject<UniformBufferObject>>(
             *allocator, vk::PipelineStageFlagBits2::eVertexShader);
     }
+}
 
-    graphics_queue.waitIdle();
+void VulkanRenderer::CreateTexture() {
+    sampler = vk::raii::Sampler{
+        device,
+        {
+            .magFilter = vk::Filter::eLinear,
+            .minFilter = vk::Filter::eLinear,
+            .mipmapMode = vk::SamplerMipmapMode::eLinear,
+            .addressModeU = vk::SamplerAddressMode::eRepeat,
+            .addressModeV = vk::SamplerAddressMode::eRepeat,
+            .addressModeW = vk::SamplerAddressMode::eRepeat,
+            .mipLodBias = 0.0f,
+            .anisotropyEnable = VK_TRUE,
+            .maxAnisotropy = physical_device.getProperties().limits.maxSamplerAnisotropy,
+            .minLod = 0.0f,
+            .maxLod = 0.0f,
+            .borderColor = vk::BorderColor::eIntOpaqueBlack,
+        }};
+    texture = std::make_unique<VulkanTexture>(*allocator, command_pool, graphics_queue,
+                                              u8"textures/texture.jpg");
 }
 
 void VulkanRenderer::CreateDescriptors() {
     descriptor_pool = vk::raii::DescriptorPool{
         device,
         {
+            .flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet,
             .maxSets = static_cast<u32>(frames_in_flight.size()),
-            .poolSizeCount = 1,
-            .pPoolSizes = TempArr<vk::DescriptorPoolSize>{{
-                .type = vk::DescriptorType::eUniformBuffer,
-                .descriptorCount = static_cast<u32>(frames_in_flight.size()),
-            }},
+            .poolSizeCount = 2,
+            .pPoolSizes =
+                TempArr<vk::DescriptorPoolSize>{
+                    {
+                        .type = vk::DescriptorType::eUniformBuffer,
+                        .descriptorCount = static_cast<u32>(frames_in_flight.size()),
+                    },
+                    {
+                        .type = vk::DescriptorType::eCombinedImageSampler,
+                        .descriptorCount = static_cast<u32>(frames_in_flight.size()),
+                    },
+                },
         }};
 
     vk::raii::DescriptorSets descriptor_sets{
@@ -536,22 +577,36 @@ void VulkanRenderer::CreateDescriptors() {
         }};
     for (std::size_t i = 0; i < frames_in_flight.size(); ++i) {
         frames_in_flight[i].descriptor_set = std::move(descriptor_sets[i]);
+        device.updateDescriptorSets(
+            {
+                {
+                    .dstSet = *frames_in_flight[i].descriptor_set,
+                    .dstBinding = 0,
+                    .descriptorCount = 1,
+                    .descriptorType = vk::DescriptorType::eUniformBuffer,
+                    .pBufferInfo =
+                        TempArr<vk::DescriptorBufferInfo>{
+                            {
+                                .buffer = *frames_in_flight[i].uniform_buffer->dst_buffer,
+                                .offset = 0,
+                                .range = VK_WHOLE_SIZE,
+                            },
+                        },
+                },
+                {
+                    .dstSet = *frames_in_flight[i].descriptor_set,
+                    .dstBinding = 1,
+                    .descriptorCount = 1,
+                    .descriptorType = vk::DescriptorType::eCombinedImageSampler,
+                    .pImageInfo = TempArr<vk::DescriptorImageInfo>{{
+                        .sampler = *sampler,
+                        .imageView = *texture->image_view,
+                        .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal,
+                    }},
+                },
+            },
+            {});
     }
-    device.updateDescriptorSets(
-        WRAPPED_RANGE(frames_in_flight | std::views::transform([](const FrameInFlight& frame) {
-                          return TempWrapper<ArrSpec<&vk::WriteDescriptorSet::pBufferInfo,
-                                                     &vk::WriteDescriptorSet::descriptorCount>>{
-                              {.dstSet = *frame.descriptor_set,
-                               .dstBinding = 0,
-                               .descriptorCount = 1,
-                               .descriptorType = vk::DescriptorType::eUniformBuffer,
-                               .pBufferInfo = TempArr<vk::DescriptorBufferInfo>{{
-                                   .buffer = frame.uniform_buffer->dst_buffer.buffer,
-                                   .offset = 0,
-                                   .range = VK_WHOLE_SIZE,
-                               }}}};
-                      })),
-        {});
 }
 
 void VulkanRenderer::CreateSyncObjects() {
@@ -569,7 +624,7 @@ void VulkanRenderer::RecordCommands(FrameInFlight& frame, std::size_t image_inde
     const auto& cmd = frame.command_buffer;
 
     CommandBufferContext cmd_context{cmd, {}};
-    frame.uniform_buffer->Upload(cmd_context);
+    frame.uniform_buffer->Upload(frame.command_buffer);
 
     CommandBufferRenderPassContext render_pass_context{
         cmd,
@@ -651,6 +706,8 @@ glm::mat4 VulkanRenderer::GetPushConstant() const {
 }
 
 void VulkanRenderer::DrawFrame() {
+    allocator->CleanupStagingBuffers();
+
     auto& frame = frames_in_flight[current_frame];
     if (device.waitForFences({*frame.in_flight_fence}, VK_TRUE, std::numeric_limits<u64>::max()) !=
         vk::Result::eSuccess) {

@@ -14,7 +14,8 @@
 namespace Renderer {
 
 class VulkanAllocator;
-class VulkanStagedBuffer;
+class VulkanImmUploadBuffer;
+class VulkanTexture;
 template <typename T>
 class VulkanUniformBufferObject;
 
@@ -46,6 +47,7 @@ private:
     void CreateFramebuffers();
     void CreateCommandBuffers();
     void CreateBuffers();
+    void CreateTexture();
     void CreateDescriptors();
     void CreateSyncObjects();
 
@@ -83,8 +85,11 @@ private:
 
     vk::raii::CommandPool command_pool = nullptr;
     std::unique_ptr<VulkanAllocator> allocator{};
-    std::unique_ptr<VulkanStagedBuffer> vertex_buffer{};
-    std::unique_ptr<VulkanStagedBuffer> index_buffer{};
+    std::unique_ptr<VulkanImmUploadBuffer> vertex_buffer{};
+    std::unique_ptr<VulkanImmUploadBuffer> index_buffer{};
+
+    std::unique_ptr<VulkanTexture> texture{};
+    vk::raii::Sampler sampler = nullptr;
 
     vk::raii::DescriptorPool descriptor_pool = nullptr;
     struct FrameInFlight {

@@ -12,11 +12,13 @@
 #include <vulkan/vulkan_raii.hpp>
 #include "common/alignment.h"
 #include "common/common_types.h"
+#include "common/temp_ptr.h"
 
 namespace Renderer {
 
 // RAII helpers
 
+/// Begins/ends a command buffer, does not submit anything.
 struct CommandBufferContext {
     explicit CommandBufferContext(const vk::raii::CommandBuffer& command_buffer_,
                                   const vk::CommandBufferBeginInfo& begin_info)
@@ -30,6 +32,40 @@ struct CommandBufferContext {
     }
 
     const vk::raii::CommandBuffer& command_buffer;
+};
+
+/// Allocates a command buffer, begins/ends it, and submits it to a queue.
+struct OneTimeCommandContext {
+    explicit OneTimeCommandContext(const vk::raii::Device& device,
+                                   const vk::raii::CommandPool& command_pool_,
+                                   const vk::raii::Queue& queue_)
+        : command_pool(command_pool_),
+          queue(queue_), command_buffers{device,
+                                         {
+                                             .commandPool = *command_pool,
+                                             .level = vk::CommandBufferLevel::ePrimary,
+                                             .commandBufferCount = 1,
+                                         }} {
+
+        command_buffers[0].begin({.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
+    }
+
+    ~OneTimeCommandContext() {
+        command_buffers[0].end();
+        queue.submit({{
+            .commandBufferCount = 1,
+            .pCommandBuffers = TempArr<vk::CommandBuffer>{*command_buffers[0]},
+        }});
+        queue.waitIdle();
+    }
+
+    vk::raii::CommandBuffer& operator*() {
+        return command_buffers[0];
+    }
+
+    const vk::raii::CommandPool& command_pool;
+    const vk::raii::Queue& queue;
+    vk::raii::CommandBuffers command_buffers;
 };
 
 struct CommandBufferRenderPassContext {

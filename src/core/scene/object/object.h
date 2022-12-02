@@ -3,6 +3,7 @@
 // Refer to the license.txt file included.
 
 #include <vector>
+#include <glm/glm.hpp>
 #include "core/scene/primitive.h"
 
 namespace Scene {

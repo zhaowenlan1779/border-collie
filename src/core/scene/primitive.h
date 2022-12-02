@@ -5,7 +5,6 @@
 #include <memory>
 #include <utility>
 #include <variant>
-#include <glm/glm.hpp>
 
 namespace Scene {
 

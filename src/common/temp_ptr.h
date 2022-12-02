@@ -4,13 +4,9 @@
 
 #pragma once
 
-#include <algorithm>
-#include <array>
 #include <initializer_list>
-#include <limits>
 #include <type_traits>
-#include <utility>
-#include <boost/pfr.hpp>
+#include <vector>
 
 /**
  * Helper for passing pointers to temporary objects.
@@ -20,6 +16,7 @@ class TempPtr {
 public:
     TempPtr() {}
     TempPtr(T&& t) : temporary(t) {}
+    TempPtr(const T& t) : temporary(t) {}
 
     operator const T*() const {
         return &temporary;

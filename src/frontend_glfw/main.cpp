@@ -39,36 +39,36 @@ int main() {
         glfwTerminate();
     });
 
-    {
-        // Query extensions required by frontend
-        u32 extension_count = 0;
-        const char** extensions_raw = glfwGetRequiredInstanceExtensions(&extension_count);
-        std::vector<const char*> extensions{extensions_raw, extensions_raw + extension_count};
+    // Query extensions required by frontend
+    u32 extension_count = 0;
+    const char** extensions_raw = glfwGetRequiredInstanceExtensions(&extension_count);
+    std::vector<const char*> extensions{extensions_raw, extensions_raw + extension_count};
 
 #ifdef NDEBUG
-        Renderer::VulkanRenderer renderer{false, std::move(extensions)};
+    Renderer::VulkanRenderer renderer{false, std::move(extensions)};
 #else
-        Renderer::VulkanRenderer renderer{true, std::move(extensions)};
+    Renderer::VulkanRenderer renderer{true, std::move(extensions)};
 #endif
 
-        VkSurfaceKHR surface;
-        if (glfwCreateWindowSurface(*renderer.GetVulkanInstance(), window, nullptr, &surface) !=
-            VK_SUCCESS) {
+    VkSurfaceKHR surface;
+    if (glfwCreateWindowSurface(*renderer.GetVulkanInstance(), window, nullptr, &surface) !=
+        VK_SUCCESS) {
 
-            SPDLOG_ERROR("Failed to create window surface");
-            return 1;
-        }
+        SPDLOG_ERROR("Failed to create window surface");
+        return 1;
+    }
 
-        renderer.Init(surface, vk::Extent2D{800, 600});
+    renderer.Init(surface, vk::Extent2D{800, 600});
 
-        glfwSetWindowUserPointer(window, &renderer);
-        glfwSetFramebufferSizeCallback(window, &OnFramebufferResized);
+    glfwSetWindowUserPointer(window, &renderer);
+    glfwSetFramebufferSizeCallback(window, &OnFramebufferResized);
 
-        while (!glfwWindowShouldClose(window)) {
-            glfwPollEvents();
-            if (g_should_render) {
-                renderer.DrawFrame();
-            }
+    while (!glfwWindowShouldClose(window)) {
+        glfwPollEvents();
+        if (g_should_render) {
+            renderer.DrawFrame();
         }
     }
+
+    return 0;
 }

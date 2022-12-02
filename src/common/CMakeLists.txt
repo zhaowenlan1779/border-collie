@@ -10,4 +10,4 @@ add_library(common STATIC
     temp_ptr.h
 )
 
-target_link_libraries(common PRIVATE spdlog boost)
+target_link_libraries(common PRIVATE spdlog)

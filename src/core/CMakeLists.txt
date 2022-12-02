@@ -8,6 +8,8 @@ add_library(core STATIC
     renderer/vulkan_renderer.h
     renderer/vulkan_shader.cpp
     renderer/vulkan_shader.h
+    renderer/vulkan_texture.cpp
+    renderer/vulkan_texture.h
     scene/materials/material.h
     scene/object/mesh.h
     scene/object/object.h

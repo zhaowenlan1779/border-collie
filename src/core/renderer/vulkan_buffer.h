@@ -6,13 +6,13 @@
 
 #include <cstring>
 #include <memory>
+#include <vk_mem_alloc.h>
 #include <vulkan/vulkan.hpp>
 #include "common/common_types.h"
 #include "core/renderer/vulkan_helpers.hpp"
 
 namespace Renderer {
 
-struct CommandBufferContext;
 class VulkanAllocator;
 
 /**
@@ -20,42 +20,66 @@ class VulkanAllocator;
  */
 class VulkanBuffer : NonCopyable {
 public:
-    explicit VulkanBuffer(VulkanAllocator& allocator,
+    explicit VulkanBuffer(const VulkanAllocator& allocator,
                           const vk::BufferCreateInfo& buffer_create_info,
                           const VmaAllocationCreateInfo& alloc_create_info);
     ~VulkanBuffer();
 
+    VkBuffer operator*() const;
+
     VmaAllocator allocator{};
-    VkBuffer buffer{};
     VmaAllocation allocation{};
     VmaAllocationInfo allocation_info{};
+
+protected:
+    VkBuffer buffer{};
 };
 
 /**
- * One-use upload buffer, e.g. vertex/index buffer
+ * One-use buffer for uploading data to another buffer. It also keeps a command buffer.
  */
-class VulkanStagedBuffer : NonCopyable {
+class VulkanStagingBuffer : public VulkanBuffer {
 public:
-    explicit VulkanStagedBuffer(VulkanAllocator& allocator, const u8* data, std::size_t size,
-                                vk::BufferUsageFlags usage);
-    ~VulkanStagedBuffer();
+    explicit VulkanStagingBuffer(const VulkanAllocator& allocator,
+                                 const vk::raii::CommandPool& command_pool,
+                                 const vk::raii::Queue& queue, std::size_t size);
+    ~VulkanStagingBuffer();
 
-    void Upload(const CommandBufferContext& context);
-    VkBuffer operator*() const;
+    const vk::raii::Queue& queue;
+    vk::raii::CommandBuffer command_buffer = nullptr;
+};
 
-    VulkanBuffer dst_buffer;
-    VulkanBuffer src_buffer;
+// Too many params, let's do it the Vulkan style
+struct VulkanImmUploadBufferCreateInfo {
+    const u8* data;
+    std::size_t size;
+    vk::BufferUsageFlags usage;
+    vk::PipelineStageFlags2 dst_stage_mask;
+    vk::AccessFlags2 dst_access_mask;
+};
+
+/**
+ * Represents a buffer that is initialized with some CPU data via a staging buffer.
+ */
+class VulkanImmUploadBuffer : public VulkanBuffer {
+public:
+    explicit VulkanImmUploadBuffer(VulkanAllocator& allocator,
+                                   const vk::raii::CommandPool& command_pool,
+                                   const vk::raii::Queue& queue,
+                                   const VulkanImmUploadBufferCreateInfo& create_info);
+    ~VulkanImmUploadBuffer();
 };
 
 class VulkanUniformBuffer : NonCopyable {
 public:
-    explicit VulkanUniformBuffer(VulkanAllocator& allocator, std::size_t size);
+    explicit VulkanUniformBuffer(const VulkanAllocator& allocator, std::size_t size);
     ~VulkanUniformBuffer();
 
-    void Upload(const CommandBufferContext& context, vk::PipelineStageFlags2 dst_stage_mask);
+    void Upload(const vk::raii::CommandBuffer& command_buffer,
+                vk::PipelineStageFlags2 dst_stage_mask);
     void* operator*() const;
 
-    VulkanAllocator& allocator;
+    const VulkanAllocator& allocator;
     VulkanBuffer dst_buffer;
     std::unique_ptr<VulkanBuffer> src_buffer;
 };
@@ -65,12 +89,12 @@ class VulkanUniformBufferObject : public VulkanUniformBuffer {
     static_assert(VerifyLayoutStd140<T>());
 
 public:
-    explicit VulkanUniformBufferObject(VulkanAllocator& allocator,
+    explicit VulkanUniformBufferObject(const VulkanAllocator& allocator,
                                        vk::PipelineStageFlags2 dst_stage_mask_)
         : VulkanUniformBuffer(allocator, sizeof(T)), dst_stage_mask(dst_stage_mask_) {}
 
-    void Upload(const CommandBufferContext& context) {
-        VulkanUniformBuffer::Upload(context, dst_stage_mask);
+    void Upload(const vk::raii::CommandBuffer& command_buffer) {
+        VulkanUniformBuffer::Upload(command_buffer, dst_stage_mask);
     }
 
     void Update(const T& new_value) {
