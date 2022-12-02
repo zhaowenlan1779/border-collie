@@ -22,4 +22,4 @@ target_shaders(core
 )
 
 target_link_libraries(core PUBLIC common Vulkan::Vulkan VulkanMemoryAllocator)
-target_link_libraries(core PRIVATE spdlog boost glm::glm stb_image)
+target_link_libraries(core PRIVATE spdlog boost glm::glm stb_image cityhash)

@@ -4,12 +4,12 @@
 
 #pragma once
 
-#include <string_view>
+#include <filesystem>
 #include <vector>
 #include "common/common_types.h"
 
 namespace Common {
 
-std::vector<u8> ReadFileContents(const std::u8string_view& path);
+std::vector<u8> ReadFileContents(const std::filesystem::path& path);
 
 }

@@ -66,25 +66,47 @@ find_package(Threads REQUIRED)
 find_package(Vulkan REQUIRED)
 add_definitions(-DVULKAN_HPP_NO_CONSTRUCTORS)
 
-# if (USE_BUNDLED_QT)
-# if ((MSVC_VERSION GREATER_EQUAL 1920 AND MSVC_VERSION LESS 1940) AND ARCHITECTURE_x86_64)
-# set(QT_VER qt-5.15.2-msvc2019_64)
-# else()
-# message(FATAL_ERROR "No bundled Qt binaries for your toolchain. Disable USE_BUNDLED_QT and provide your own.")
-# endif()
+# Detect current compilation architecture and create standard definitions
+# =======================================================================
+include(CheckSymbolExists)
 
-# if (DEFINED QT_VER)
-# download_bundled_external("qt/" ${QT_VER} QT_PREFIX)
-# endif()
+function(detect_architecture symbol arch)
+    if(NOT DEFINED ARCHITECTURE)
+        set(CMAKE_REQUIRED_QUIET 1)
+        check_symbol_exists("${symbol}" "" ARCHITECTURE_${arch})
+        unset(CMAKE_REQUIRED_QUIET)
 
-# set(QT_PREFIX_HINT HINTS "${QT_PREFIX}")
-# else()
-# # Passing an empty HINTS seems to cause default system paths to get ignored in CMake 2.8 so
-# # make sure to not pass anything if we don't have one.
-# set(QT_PREFIX_HINT)
-# endif()
+        # The output variable needs to be unique across invocations otherwise
+        # CMake's crazy scope rules will keep it defined
+        if(ARCHITECTURE_${arch})
+            set(ARCHITECTURE "${arch}" PARENT_SCOPE)
+            set(ARCHITECTURE_${arch} 1 PARENT_SCOPE)
+            add_definitions(-DARCHITECTURE_${arch}=1)
+        endif()
+    endif()
+endfunction()
 
-# find_package(Qt5 REQUIRED COMPONENTS Widgets ${QT_PREFIX_HINT})
+if(NOT ENABLE_GENERIC)
+    if(MSVC)
+        detect_architecture("_M_AMD64" x86_64)
+        detect_architecture("_M_IX86" x86)
+        detect_architecture("_M_ARM" ARM)
+        detect_architecture("_M_ARM64" ARM64)
+    else()
+        detect_architecture("__x86_64__" x86_64)
+        detect_architecture("__i386__" x86)
+        detect_architecture("__arm__" ARM)
+        detect_architecture("__aarch64__" ARM64)
+    endif()
+endif()
+
+if(NOT DEFINED ARCHITECTURE)
+    set(ARCHITECTURE "GENERIC")
+    set(ARCHITECTURE_GENERIC 1)
+    add_definitions(-DARCHITECTURE_GENERIC=1)
+endif()
+
+message(STATUS "Target architecture: ${ARCHITECTURE}")
 
 # Include source code
 # ===================

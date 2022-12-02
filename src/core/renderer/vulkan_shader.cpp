@@ -7,9 +7,9 @@
 
 namespace Renderer {
 
-VulkanShader::VulkanShader(const vk::raii::Device& device, const std::u8string_view& path) {
-    const auto& code =
-        Common::ReadFileContents(std::u8string{u8"shaders/"} + std::u8string{path} + u8".spv");
+VulkanShader::VulkanShader(const vk::raii::Device& device, const std::filesystem::path& path) {
+    const auto file_path = (std::filesystem::path{u8"shaders"} / path).concat(u8".spv");
+    const auto& code = Common::ReadFileContents(file_path);
     if (code.empty()) {
         throw std::runtime_error("Unable to read shader file");
     }

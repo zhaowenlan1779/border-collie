@@ -1,6 +1,7 @@
 # Definitions for all external bundled libraries
 
 add_subdirectory(boost)
+add_subdirectory(cityhash)
 add_subdirectory(glfw)
 
 add_subdirectory(glm)

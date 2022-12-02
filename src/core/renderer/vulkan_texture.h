@@ -4,8 +4,8 @@
 
 #pragma once
 
+#include <filesystem>
 #include <memory>
-#include <string_view>
 #include <utility>
 #include <vk_mem_alloc.h>
 #include <vulkan/vulkan_raii.hpp>
@@ -36,29 +36,14 @@ private:
     VkImage image{};
 };
 
-// class VulkanTextureImage : NonCopyable {
-// public:
-//     explicit VulkanTextureImage(const VulkanAllocator& allocator, const u8* data, std::size_t
-//     size,
-//                                 u32 width, u32 height,
-//                                 vk::Format format = vk::Format::eR8G8B8A8Srgb);
-//     ~VulkanTextureImage();
-
-//     VkImage operator*() const;
-
-//     const VulkanAllocator& allocator;
-//     VulkanImage dst_image;
-//     VulkanBuffer src_buffer;
-// };
-
 class VulkanTexture : NonCopyable {
 public:
     explicit VulkanTexture(VulkanAllocator& allocator, const vk::raii::CommandPool& command_pool,
-                           const vk::raii::Queue& queue, const std::u8string_view& path);
+                           const vk::raii::Queue& queue, const std::filesystem::path& path);
     ~VulkanTexture();
 
-    int width{};
-    int height{};
+    u32 width{};
+    u32 height{};
     std::unique_ptr<VulkanImage> image;
     vk::raii::ImageView image_view = nullptr;
 };

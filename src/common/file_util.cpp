@@ -2,18 +2,16 @@
 // Licensed under GPLv2 or any later version
 // Refer to the license.txt file included.
 
-#include <filesystem>
 #include <fstream>
 #include <spdlog/spdlog.h>
 #include "common/file_util.h"
 
 namespace Common {
 
-std::vector<u8> ReadFileContents(const std::u8string_view& path) {
-    std::filesystem::path fs_path{path};
-    std::ifstream file(fs_path, std::ios::ate | std::ios::binary);
+std::vector<u8> ReadFileContents(const std::filesystem::path& path) {
+    std::ifstream file(path, std::ios::ate | std::ios::binary);
     if (!file.is_open()) {
-        SPDLOG_ERROR("Could not open file {}", fs_path.string());
+        SPDLOG_ERROR("Could not open file {}", path.string());
         return {};
     }
 
@@ -25,7 +23,7 @@ std::vector<u8> ReadFileContents(const std::u8string_view& path) {
     if (file.good()) {
         return buffer;
     } else {
-        SPDLOG_ERROR("Failed to read from file {}", fs_path.string());
+        SPDLOG_ERROR("Failed to read from file {}", path.string());
         return {};
     }
 }
