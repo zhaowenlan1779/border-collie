@@ -43,6 +43,7 @@ public:
     private:
         VulkanAllocator& allocator;
         std::unique_ptr<VulkanStagingBuffer> buffer;
+        const vk::raii::Queue& queue;
         vk::raii::Fence fence;
     };
     StagingBufferHandle CreateStagingBuffer(const vk::raii::CommandPool& command_pool,

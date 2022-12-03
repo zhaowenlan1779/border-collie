@@ -41,11 +41,9 @@ protected:
 class VulkanStagingBuffer : public VulkanBuffer {
 public:
     explicit VulkanStagingBuffer(const VulkanAllocator& allocator,
-                                 const vk::raii::CommandPool& command_pool,
-                                 const vk::raii::Queue& queue, std::size_t size);
+                                 const vk::raii::CommandPool& command_pool, std::size_t size);
     ~VulkanStagingBuffer();
 
-    const vk::raii::Queue& queue;
     vk::raii::CommandBuffer command_buffer = nullptr;
 };
 

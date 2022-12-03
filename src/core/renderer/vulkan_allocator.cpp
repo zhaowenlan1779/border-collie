@@ -50,22 +50,22 @@ VulkanAllocator::~VulkanAllocator() {
 
 VulkanAllocator::StagingBufferHandle::StagingBufferHandle(VulkanAllocator& allocator_,
                                                           const vk::raii::CommandPool& command_pool,
-                                                          const vk::raii::Queue& queue,
+                                                          const vk::raii::Queue& queue_,
                                                           std::size_t size)
     : allocator(allocator_),
-      buffer(std::make_unique<VulkanStagingBuffer>(allocator, command_pool, queue, size)),
-      fence{allocator.device, vk::FenceCreateInfo{}} {
+      buffer(std::make_unique<VulkanStagingBuffer>(allocator, command_pool, size)),
+      queue(queue_), fence{allocator.device, vk::FenceCreateInfo{}} {
 
     buffer->command_buffer.begin({.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
 }
 
 VulkanAllocator::StagingBufferHandle::~StagingBufferHandle() {
     buffer->command_buffer.end();
-    buffer->queue.submit({{
-                             .commandBufferCount = 1,
-                             .pCommandBuffers = TempArr<vk::CommandBuffer>{*buffer->command_buffer},
-                         }},
-                         *fence);
+    queue.submit({{
+                     .commandBufferCount = 1,
+                     .pCommandBuffers = TempArr<vk::CommandBuffer>{*buffer->command_buffer},
+                 }},
+                 *fence);
 
     allocator.staging_buffers.emplace_back(std::move(buffer), std::move(fence));
 }
