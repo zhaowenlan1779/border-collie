@@ -2,22 +2,20 @@
 // Licensed under GPLv2 or any later version
 // Refer to the license.txt file included.
 
-#include <algorithm>
 #include <array>
 #include <chrono>
-#include <limits>
-#include <ranges>
-#include <set>
-#include <string_view>
 #include <glm/gtc/matrix_transform.hpp>
 #include <spdlog/spdlog.h>
-#include "common/ranges.h"
 #include "common/temp_ptr.h"
 #include "core/renderer/vulkan_allocator.h"
 #include "core/renderer/vulkan_buffer.h"
+#include "core/renderer/vulkan_context.h"
+#include "core/renderer/vulkan_device.h"
+#include "core/renderer/vulkan_graphics_pipeline.h"
 #include "core/renderer/vulkan_helpers.hpp"
 #include "core/renderer/vulkan_renderer.h"
 #include "core/renderer/vulkan_shader.h"
+#include "core/renderer/vulkan_swapchain.h"
 #include "core/renderer/vulkan_texture.h"
 
 namespace Renderer {
@@ -25,321 +23,88 @@ namespace Renderer {
 VulkanRenderer::VulkanRenderer(bool enable_validation_layers,
                                std::vector<const char*> frontend_required_extensions) {
 
-    CreateInstance(enable_validation_layers, frontend_required_extensions);
+    context =
+        std::make_unique<VulkanContext>(enable_validation_layers, frontend_required_extensions);
 }
 
 VulkanRenderer::~VulkanRenderer() {
-    if (*device) {
-        device.waitIdle();
-    }
-}
-
-static VKAPI_ATTR VkBool32 VKAPI_CALL DebugCallback(
-    VkDebugUtilsMessageSeverityFlagBitsEXT severity_,
-    [[maybe_unused]] VkDebugUtilsMessageTypeFlagsEXT type,
-    const VkDebugUtilsMessengerCallbackDataEXT* callback_data, [[maybe_unused]] void* user_data) {
-
-    vk::DebugUtilsMessageSeverityFlagBitsEXT severity{static_cast<u32>(severity_)};
-    if (severity == vk::DebugUtilsMessageSeverityFlagBitsEXT::eError) {
-        SPDLOG_ERROR("{}", callback_data->pMessage);
-    } else if (severity == vk::DebugUtilsMessageSeverityFlagBitsEXT::eWarning) {
-        SPDLOG_WARN("{}", callback_data->pMessage);
-    } else if (severity == vk::DebugUtilsMessageSeverityFlagBitsEXT::eInfo) {
-        SPDLOG_INFO("{}", callback_data->pMessage);
-    } else {
-        SPDLOG_DEBUG("{}", callback_data->pMessage);
-    }
-    return VK_FALSE;
-}
-
-void VulkanRenderer::CreateInstance(bool enable_validation_layers,
-                                    const std::vector<const char*>& frontend_required_extensions) {
-
-    // Validation Layers
-    std::vector<const char*> validation_layers;
-    if (enable_validation_layers) {
-        validation_layers.emplace_back("VK_LAYER_KHRONOS_validation");
-    }
-
-    const auto& available_layers = context.enumerateInstanceLayerProperties();
-    const bool validation_available = std::ranges::all_of(
-        validation_layers, [&available_layers](const std::string_view& layer_name) {
-            return std::ranges::any_of(available_layers,
-                                       [&layer_name](const vk::LayerProperties& layer) {
-                                           return layer_name == layer.layerName;
-                                       });
-        });
-    if (!validation_available) {
-        SPDLOG_CRITICAL("Some validation layers are not available");
-        throw std::runtime_error("Some validation layers are not available");
-    }
-
-    // Extensions
-    std::vector<const char*> required_extensions(frontend_required_extensions);
-    if (enable_validation_layers) {
-        required_extensions.emplace_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
-    }
-
-    const vk::InstanceCreateInfo instance_info{
-        .pApplicationInfo = TempPtr{vk::ApplicationInfo{
-            .pApplicationName = "BorderCollie",
-            .applicationVersion = 1,
-            .pEngineName = "BorderCollie",
-            .engineVersion = 1,
-            .apiVersion = VK_API_VERSION_1_3,
-        }},
-        .enabledLayerCount = static_cast<u32>(validation_layers.size()),
-        .ppEnabledLayerNames = validation_layers.data(),
-        .enabledExtensionCount = static_cast<u32>(required_extensions.size()),
-        .ppEnabledExtensionNames = required_extensions.data(),
-    };
-    const vk::DebugUtilsMessengerCreateInfoEXT debug_messenger_info{
-        .messageSeverity = vk::DebugUtilsMessageSeverityFlagBitsEXT::eInfo |
-                           vk::DebugUtilsMessageSeverityFlagBitsEXT::eWarning |
-                           vk::DebugUtilsMessageSeverityFlagBitsEXT::eError,
-        .messageType = vk::DebugUtilsMessageTypeFlagBitsEXT::eGeneral |
-                       vk::DebugUtilsMessageTypeFlagBitsEXT::ePerformance |
-                       vk::DebugUtilsMessageTypeFlagBitsEXT::eValidation,
-        .pfnUserCallback = &DebugCallback,
-    };
-    if (enable_validation_layers) {
-        instance = vk::raii::Instance{
-            context,
-            vk::StructureChain{instance_info, debug_messenger_info}.get<vk::InstanceCreateInfo>()};
-        debug_messenger = vk::raii::DebugUtilsMessengerEXT{instance, debug_messenger_info};
-    } else {
-        instance = vk::raii::Instance{context, instance_info};
-    }
+    (*device)->waitIdle();
 }
 
 vk::raii::Instance& VulkanRenderer::GetVulkanInstance() {
-    return instance;
+    return context->instance;
 }
 
 const vk::raii::Instance& VulkanRenderer::GetVulkanInstance() const {
-    return instance;
+    return context->instance;
 }
 
-void VulkanRenderer::Init(vk::SurfaceKHR surface_, const vk::Extent2D& actual_extent) {
-    surface = vk::raii::SurfaceKHR{instance, surface_};
+struct Vertex {
+    glm::vec2 pos;
+    glm::vec3 color;
+    glm::vec2 texCoord;
+};
 
-    InitDevice();
-    CreateSwapchain(actual_extent);
-    CreateRenderPass();
-    CreateDescriptorSetLayout();
-    CreateGraphicsPipeline();
-    CreateFramebuffers();
-    CreateCommandBuffers();
-    CreateBuffers();
-    CreateTexture();
-    CreateDescriptors();
-    CreateSyncObjects();
-}
+struct VulkanRenderer::UniformBufferObject {
+    glm::mat4 model;
+    glm::mat4 view;
+    glm::mat4 proj;
+};
 
-void VulkanRenderer::InitDevice() {
-    vk::raii::PhysicalDevices physical_devices{instance};
+void VulkanRenderer::Init(vk::SurfaceKHR surface, const vk::Extent2D& actual_extent) {
+    device = std::make_unique<VulkanDevice>(
+        context->instance, surface,
+        std::array{
+            VK_KHR_SWAPCHAIN_EXTENSION_NAME,
+        },
+        Helpers::GenericStructureChain{vk::PhysicalDeviceFeatures2{
+                                           .features =
+                                               {
+                                                   .samplerAnisotropy = VK_TRUE,
+                                               },
+                                       },
+                                       vk::PhysicalDeviceVulkan13Features{
+                                           .pipelineCreationCacheControl = VK_TRUE,
+                                           .synchronization2 = VK_TRUE,
+                                       }});
 
-    // Prefer discrete GPUs
-    const auto result =
-        std::ranges::find_if(physical_devices, [this](vk::raii::PhysicalDevice& it) {
-            return it.getProperties().deviceType == vk::PhysicalDeviceType::eDiscreteGpu &&
-                   CreateDevice(it);
-        });
-    if (result != physical_devices.end()) {
-        return;
-    }
+    // Buffers & Textures
+    const std::vector<Vertex> vertices = {{{-0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}, {1.0f, 0.0f}},
+                                          {{0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f}},
+                                          {{0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}, {0.0f, 1.0f}},
+                                          {{-0.5f, 0.5f}, {1.0f, 1.0f, 1.0f}, {1.0f, 1.0f}}};
+    vertex_buffer = std::make_unique<VulkanImmUploadBuffer>(
+        *device, VulkanImmUploadBufferCreateInfo{
+                     .data = reinterpret_cast<const u8*>(vertices.data()),
+                     .size = vertices.size() * sizeof(vertices[0]),
+                     .usage = vk::BufferUsageFlagBits::eVertexBuffer,
+                     .dst_stage_mask = vk::PipelineStageFlagBits2::eVertexAttributeInput,
+                     .dst_access_mask = vk::AccessFlagBits2::eVertexAttributeRead,
+                 });
 
-    // Try everything else
-    const auto result_2 =
-        std::ranges::find_if(physical_devices, [this](vk::raii::PhysicalDevice& it) {
-            return it.getProperties().deviceType != vk::PhysicalDeviceType::eDiscreteGpu &&
-                   CreateDevice(it);
-        });
-    if (result_2 == physical_devices.end()) {
-        throw std::runtime_error("Failed to create any device");
-    }
-}
+    const std::vector<u16> indices = {0, 1, 2, 2, 3, 0};
+    index_buffer = std::make_unique<VulkanImmUploadBuffer>(
+        *device, VulkanImmUploadBufferCreateInfo{
+                     .data = reinterpret_cast<const u8*>(indices.data()),
+                     .size = indices.size() * sizeof(indices[0]),
+                     .usage = vk::BufferUsageFlagBits::eIndexBuffer,
+                     .dst_stage_mask = vk::PipelineStageFlagBits2::eIndexInput,
+                     .dst_access_mask = vk::AccessFlagBits2::eIndexRead,
+                 });
 
-bool VulkanRenderer::CreateDevice(vk::raii::PhysicalDevice& physical_device_) {
-    physical_device = std::move(physical_device_);
+    texture = std::make_unique<VulkanTexture>(*device, u8"textures/texture.jpg");
 
-    // Check for extensions
-    static constexpr std::array<const char*, 1> RequiredExtensions{{
-        VK_KHR_SWAPCHAIN_EXTENSION_NAME,
-    }};
+    swap_chain = std::make_unique<VulkanSwapchain>(*device, actual_extent);
 
-    const auto& device_exts = physical_device.enumerateDeviceExtensionProperties();
-    if (!std::ranges::all_of(RequiredExtensions, [&device_exts](const std::string_view ext_name) {
-            return std::ranges::any_of(device_exts,
-                                       [&ext_name](const vk::ExtensionProperties& ext) {
-                                           return ext_name == ext.extensionName;
-                                       });
-        })) {
+    // Pipeline
+    static constexpr auto VertexAttributeDescriptions = Helpers::AttributeDescriptionsFor<Vertex>();
 
-        return false;
-    }
-
-    // Features
-    const auto& features =
-        physical_device
-            .getFeatures2<vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceVulkan13Features>();
-    if (!features.get<vk::PhysicalDeviceFeatures2>().features.samplerAnisotropy ||
-        !features.get<vk::PhysicalDeviceVulkan13Features>().synchronization2) {
-
-        return false;
-    }
-
-    const auto& queue_families = physical_device.getQueueFamilyProperties();
-    graphics_queue_family = *std::ranges::find_if(
-        std::ranges::iota_view<u32, u32>(0, static_cast<u32>(queue_families.size())),
-        [&queue_families](u32 i) {
-            return static_cast<bool>(queue_families[i].queueFlags & vk::QueueFlagBits::eGraphics);
-        });
-    present_queue_family = *std::ranges::find_if(
-        std::ranges::iota_view<u32, u32>(0, static_cast<u32>(queue_families.size())),
-        [this](u32 i) { return physical_device.getSurfaceSupportKHR(i, *surface); });
-
-    if (graphics_queue_family == queue_families.size() ||
-        present_queue_family == queue_families.size()) {
-        return false;
-    }
-
-    const std::set<u32> family_ids{graphics_queue_family, present_queue_family};
-    float priority = 1.0f;
-    try {
-        device = vk::raii::Device{
-            physical_device,
-            {
-                .pNext = &vk::StructureChain{vk::PhysicalDeviceFeatures2{
-                                                 .features =
-                                                     {
-                                                         .samplerAnisotropy = VK_TRUE,
-                                                     },
-                                             },
-                                             vk::PhysicalDeviceVulkan13Features{
-                                                 .synchronization2 = VK_TRUE,
-                                             }}
-                              .get<vk::PhysicalDeviceFeatures2>(),
-                .queueCreateInfoCount = static_cast<u32>(family_ids.size()),
-                .pQueueCreateInfos =
-                    Common::VectorFromRange(family_ids |
-                                            std::views::transform([&priority](u32 family_id) {
-                                                return vk::DeviceQueueCreateInfo{
-                                                    .queueFamilyIndex = family_id,
-                                                    .queueCount = 1,
-                                                    .pQueuePriorities = &priority,
-                                                };
-                                            }))
-                        .data(),
-                .enabledExtensionCount = static_cast<u32>(RequiredExtensions.size()),
-                .ppEnabledExtensionNames = RequiredExtensions.data(),
-            }};
-    } catch (...) {
-        return false;
-    }
-
-    queue_family_indices.assign(family_ids.begin(), family_ids.end());
-    graphics_queue = device.getQueue(graphics_queue_family, 0);
-    present_queue = device.getQueue(present_queue_family, 0);
-    return true;
-}
-
-static vk::SurfaceFormatKHR SelectSurfaceFormat(const std::vector<vk::SurfaceFormatKHR>& formats) {
-    for (const auto format : formats) {
-        if (format.colorSpace == vk::ColorSpaceKHR::eSrgbNonlinear &&
-            format.format == vk::Format::eB8G8R8A8Srgb) {
-            return format;
-        }
-    }
-    return formats[0];
-}
-
-static vk::PresentModeKHR SelectPresentMode(const std::vector<vk::PresentModeKHR>& present_modes) {
-    for (const auto mode : present_modes) {
-        if (mode == vk::PresentModeKHR::eMailbox) {
-            return mode;
-        }
-    }
-    return present_modes[0];
-}
-
-void VulkanRenderer::CreateSwapchain(const vk::Extent2D& actual_extent) {
-    surface_format = SelectSurfaceFormat(physical_device.getSurfaceFormatsKHR(*surface));
-    const auto present_mode =
-        SelectPresentMode(physical_device.getSurfacePresentModesKHR(*surface));
-
-    const auto& capabilities = physical_device.getSurfaceCapabilitiesKHR(*surface);
-    extent = vk::Extent2D{
-        std::clamp(extent.width, capabilities.minImageExtent.width,
-                   capabilities.maxImageExtent.width),
-        std::clamp(extent.height, capabilities.minImageExtent.height,
-                   capabilities.maxImageExtent.height),
-    };
-    const u32 image_count = std::min(capabilities.minImageCount + 1, capabilities.maxImageCount);
-    swap_chain = vk::raii::SwapchainKHR{
-        device,
-        {
-            .surface = *surface,
-            .minImageCount = image_count,
-            .imageFormat = surface_format.format,
-            .imageColorSpace = surface_format.colorSpace,
-            .imageExtent = std::move(actual_extent),
-            .imageArrayLayers = 1,
-            .imageUsage = vk::ImageUsageFlagBits::eColorAttachment,
-            .imageSharingMode = queue_family_indices.size() > 1 ? vk::SharingMode::eConcurrent
-                                                                : vk::SharingMode::eExclusive,
-            .queueFamilyIndexCount = static_cast<u32>(queue_family_indices.size()),
-            .pQueueFamilyIndices = queue_family_indices.data(),
-            .preTransform = capabilities.currentTransform,
-            .presentMode = present_mode,
-            .oldSwapchain = *swap_chain,
-        }};
-
-    image_views.clear();
-    for (const auto& image : swap_chain.getImages()) {
-        image_views.emplace_back(
-            device, vk::ImageViewCreateInfo{
-                        .image = image,
-                        .viewType = vk::ImageViewType::e2D,
-                        .format = surface_format.format,
-                        .subresourceRange = {.aspectMask = vk::ImageAspectFlagBits::eColor,
-                                             .baseMipLevel = 0,
-                                             .levelCount = 1,
-                                             .baseArrayLayer = 0,
-                                             .layerCount = 1}});
-    }
-}
-
-void VulkanRenderer::CreateDescriptorSetLayout() {
-    descriptor_set_layout = vk::raii::DescriptorSetLayout{
-        device,
-        {
-            .bindingCount = 2,
-            .pBindings =
-                TempArr<vk::DescriptorSetLayoutBinding>{
-                    {
-                        .binding = 0,
-                        .descriptorType = vk::DescriptorType::eUniformBuffer,
-                        .descriptorCount = 1,
-                        .stageFlags = vk::ShaderStageFlagBits::eVertex,
-                    },
-                    {
-                        .binding = 1,
-                        .descriptorType = vk::DescriptorType::eCombinedImageSampler,
-                        .descriptorCount = 1,
-                        .stageFlags = vk::ShaderStageFlagBits::eFragment,
-                    },
-                },
-        }};
-}
-
-void VulkanRenderer::CreateRenderPass() {
-    render_pass = vk::raii::RenderPass{
-        device,
-        {
+    // clang-format off
+    pipeline = std::make_unique<VulkanGraphicsPipeline>(*device, VulkanGraphicsPipelineCreateInfo{
+        .render_pass_info = {
             .attachmentCount = 1,
             .pAttachments = TempArr<vk::AttachmentDescription>{{
-                .format = surface_format.format,
+                .format = swap_chain->surface_format.format,
                 .samples = vk::SampleCountFlagBits::e1,
                 .loadOp = vk::AttachmentLoadOp::eClear,
                 .storeOp = vk::AttachmentStoreOp::eStore,
@@ -361,50 +126,22 @@ void VulkanRenderer::CreateRenderPass() {
                 .srcSubpass = VK_SUBPASS_EXTERNAL,
                 .dstSubpass = 0,
                 .srcStageMask = vk::PipelineStageFlagBits::eColorAttachmentOutput,
-                .dstStageMask = vk::PipelineStageFlagBits::eColorAttachmentOutput,
-                .srcAccessMask = vk::AccessFlags{},
-                .dstAccessMask = vk::AccessFlagBits::eColorAttachmentWrite,
+                .dstStageMask = vk::PipelineStageFlagBits::eFragmentShader,
+                .srcAccessMask = vk::AccessFlagBits::eColorAttachmentWrite,
+                .dstAccessMask = vk::AccessFlagBits::eUniformRead,
             }},
-        }};
-}
-
-struct Vertex {
-    glm::vec2 pos;
-    glm::vec3 color;
-    glm::vec2 texCoord;
-};
-
-void VulkanRenderer::CreateGraphicsPipeline() {
-    pipeline_layout =
-        vk::raii::PipelineLayout{device,
-                                 {
-                                     .setLayoutCount = 1,
-                                     .pSetLayouts = TempArr<vk::DescriptorSetLayout>{{
-                                         *descriptor_set_layout,
-                                     }},
-                                     .pushConstantRangeCount = 1,
-                                     .pPushConstantRanges = TempArr<vk::PushConstantRange>{{
-                                         .stageFlags = vk::ShaderStageFlagBits::eVertex,
-                                         .offset = 0,
-                                         .size = sizeof(glm::mat4),
-                                     }},
-                                 }};
-
-    static constexpr auto VertexAttributeDescriptions = AttributeDescriptionsFor<Vertex>();
-    pipeline = vk::raii::Pipeline{
-        device,
-        VK_NULL_HANDLE,
-        {
+        },
+        .pipeline_info = {
             .stageCount = 2,
             .pStages = TempArr<vk::PipelineShaderStageCreateInfo>{{
                 {
                     .stage = vk::ShaderStageFlagBits::eVertex,
-                    .module = *VulkanShader{device, u8"core/renderer/shaders/test.vert"},
+                    .module = *VulkanShader{**device, u8"core/renderer/shaders/test.vert"},
                     .pName = "main",
                 },
                 {
                     .stage = vk::ShaderStageFlagBits::eFragment,
-                    .module = *VulkanShader{device, u8"core/renderer/shaders/test.frag"},
+                    .module = *VulkanShader{**device, u8"core/renderer/shaders/test.frag"},
                     .pName = "main",
                 },
             }},
@@ -418,256 +155,146 @@ void VulkanRenderer::CreateGraphicsPipeline() {
                 .vertexAttributeDescriptionCount = VertexAttributeDescriptions.size(),
                 .pVertexAttributeDescriptions = VertexAttributeDescriptions.data(),
             }},
-            .pInputAssemblyState = TempPtr{vk::PipelineInputAssemblyStateCreateInfo{
-                .topology = vk::PrimitiveTopology::eTriangleList,
-                .primitiveRestartEnable = VK_FALSE,
-            }},
-            .pViewportState = TempPtr{vk::PipelineViewportStateCreateInfo{
-                .viewportCount = 1,
-                .scissorCount = 1,
-            }},
-            .pRasterizationState = TempPtr{vk::PipelineRasterizationStateCreateInfo{
-                .cullMode = vk::CullModeFlagBits::eBack,
-                .lineWidth = 1.0f,
-            }},
-            .pMultisampleState = TempPtr{vk::PipelineMultisampleStateCreateInfo{}},
-            .pColorBlendState = TempPtr{vk::PipelineColorBlendStateCreateInfo{
-                .logicOpEnable = VK_FALSE,
-                .attachmentCount = 1,
-                .pAttachments = TempArr<vk::PipelineColorBlendAttachmentState>{{
-                    .colorWriteMask =
-                        vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG |
-                        vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA,
-                }},
-            }},
-            .pDynamicState = TempPtr{vk::PipelineDynamicStateCreateInfo{
-                .dynamicStateCount = 2,
-                .pDynamicStates = TempArr<vk::DynamicState>{{
-                    vk::DynamicState::eViewport,
-                    vk::DynamicState::eScissor,
-                }},
-            }},
-            .layout = *pipeline_layout,
-            .renderPass = *render_pass,
-            .subpass = 0,
-        }};
-}
-
-void VulkanRenderer::CreateFramebuffers() {
-    framebuffers.clear();
-    for (const auto& image_view : image_views) {
-        framebuffers.emplace_back(device, vk::FramebufferCreateInfo{
-                                              .renderPass = *render_pass,
-                                              .attachmentCount = 1,
-                                              .pAttachments = TempArr<vk::ImageView>{*image_view},
-                                              .width = extent.width,
-                                              .height = extent.height,
-                                              .layers = 1,
-                                          });
-    }
-}
-
-void VulkanRenderer::CreateCommandBuffers() {
-    command_pool =
-        vk::raii::CommandPool{device,
-                              {
-                                  .flags = vk::CommandPoolCreateFlagBits::eResetCommandBuffer,
-                                  .queueFamilyIndex = graphics_queue_family,
-                              }};
-
-    vk::raii::CommandBuffers command_buffers{
-        device,
-        {
-            .commandPool = *command_pool,
-            .level = vk::CommandBufferLevel::ePrimary,
-            .commandBufferCount = static_cast<u32>(frames_in_flight.size()),
-        }};
-    for (std::size_t i = 0; i < frames_in_flight.size(); ++i) {
-        frames_in_flight[i].command_buffer = std::move(command_buffers[i]);
-    }
-}
-
-struct VulkanRenderer::UniformBufferObject {
-    glm::mat4 model;
-    glm::mat4 view;
-    glm::mat4 proj;
-};
-
-void VulkanRenderer::CreateBuffers() {
-    allocator = std::make_unique<VulkanAllocator>(instance, physical_device, device);
-
-    const std::vector<Vertex> vertices = {{{-0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}, {1.0f, 0.0f}},
-                                          {{0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f}},
-                                          {{0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}, {0.0f, 1.0f}},
-                                          {{-0.5f, 0.5f}, {1.0f, 1.0f, 1.0f}, {1.0f, 1.0f}}};
-    vertex_buffer = std::make_unique<VulkanImmUploadBuffer>(
-        *allocator, command_pool, graphics_queue,
-        VulkanImmUploadBufferCreateInfo{
-            .data = reinterpret_cast<const u8*>(vertices.data()),
-            .size = vertices.size() * sizeof(vertices[0]),
-            .usage = vk::BufferUsageFlagBits::eVertexBuffer,
-            .dst_stage_mask = vk::PipelineStageFlagBits2::eVertexAttributeInput,
-            .dst_access_mask = vk::AccessFlagBits2::eVertexAttributeRead,
-        });
-
-    const std::vector<u16> indices = {0, 1, 2, 2, 3, 0};
-    index_buffer = std::make_unique<VulkanImmUploadBuffer>(
-        *allocator, command_pool, graphics_queue,
-        VulkanImmUploadBufferCreateInfo{
-            .data = reinterpret_cast<const u8*>(indices.data()),
-            .size = indices.size() * sizeof(indices[0]),
-            .usage = vk::BufferUsageFlagBits::eIndexBuffer,
-            .dst_stage_mask = vk::PipelineStageFlagBits2::eIndexInput,
-            .dst_access_mask = vk::AccessFlagBits2::eIndexRead,
-        });
-
-    for (auto& frame : frames_in_flight) {
-        frame.uniform_buffer = std::make_unique<VulkanUniformBufferObject<UniformBufferObject>>(
-            *allocator, vk::PipelineStageFlagBits2::eVertexShader);
-    }
-}
-
-void VulkanRenderer::CreateTexture() {
-    sampler = vk::raii::Sampler{
-        device,
-        {
-            .magFilter = vk::Filter::eLinear,
-            .minFilter = vk::Filter::eLinear,
-            .mipmapMode = vk::SamplerMipmapMode::eLinear,
-            .addressModeU = vk::SamplerAddressMode::eRepeat,
-            .addressModeV = vk::SamplerAddressMode::eRepeat,
-            .addressModeW = vk::SamplerAddressMode::eRepeat,
-            .mipLodBias = 0.0f,
-            .anisotropyEnable = VK_TRUE,
-            .maxAnisotropy = physical_device.getProperties().limits.maxSamplerAnisotropy,
-            .minLod = 0.0f,
-            .maxLod = 0.0f,
-            .borderColor = vk::BorderColor::eIntOpaqueBlack,
-        }};
-    texture = std::make_unique<VulkanTexture>(*allocator, command_pool, graphics_queue,
-                                              u8"textures/texture.jpg");
-}
-
-void VulkanRenderer::CreateDescriptors() {
-    descriptor_pool = vk::raii::DescriptorPool{
-        device,
-        {
-            .flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet,
-            .maxSets = static_cast<u32>(frames_in_flight.size()),
-            .poolSizeCount = 2,
-            .pPoolSizes =
-                TempArr<vk::DescriptorPoolSize>{
-                    {
-                        .type = vk::DescriptorType::eUniformBuffer,
-                        .descriptorCount = static_cast<u32>(frames_in_flight.size()),
-                    },
-                    {
-                        .type = vk::DescriptorType::eCombinedImageSampler,
-                        .descriptorCount = static_cast<u32>(frames_in_flight.size()),
-                    },
-                },
-        }};
-
-    vk::raii::DescriptorSets descriptor_sets{
-        device,
-        {
-            .descriptorPool = *descriptor_pool,
-            .descriptorSetCount = static_cast<u32>(frames_in_flight.size()),
-            .pSetLayouts = std::vector{frames_in_flight.size(), *descriptor_set_layout}.data(),
-        }};
-    for (std::size_t i = 0; i < frames_in_flight.size(); ++i) {
-        frames_in_flight[i].descriptor_set = std::move(descriptor_sets[i]);
-        device.updateDescriptorSets(
+        },
+        .descriptor_sets = {{
+            UBO<UniformBufferObject>(vk::ShaderStageFlagBits::eVertex),
             {
-                {
-                    .dstSet = *frames_in_flight[i].descriptor_set,
-                    .dstBinding = 0,
-                    .descriptorCount = 1,
-                    .descriptorType = vk::DescriptorType::eUniformBuffer,
-                    .pBufferInfo =
-                        TempArr<vk::DescriptorBufferInfo>{
-                            {
-                                .buffer = *frames_in_flight[i].uniform_buffer->dst_buffer,
-                                .offset = 0,
-                                .range = VK_WHOLE_SIZE,
-                            },
-                        },
-                },
-                {
-                    .dstSet = *frames_in_flight[i].descriptor_set,
-                    .dstBinding = 1,
-                    .descriptorCount = 1,
-                    .descriptorType = vk::DescriptorType::eCombinedImageSampler,
-                    .pImageInfo = TempArr<vk::DescriptorImageInfo>{{
-                        .sampler = *sampler,
-                        .imageView = *texture->image_view,
-                        .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal,
-                    }},
+                .type = vk::DescriptorType::eCombinedImageSampler,
+                .count = 1,
+                .stages = vk::ShaderStageFlagBits::eFragment,
+                .images = {
+                    {
+                        .image = *texture->image_view,
+                        .layout = vk::ImageLayout::eShaderReadOnlyOptimal,
+                    },
                 },
             },
-            {});
-    }
-}
-
-void VulkanRenderer::CreateSyncObjects() {
-    for (auto& frame : frames_in_flight) {
-        frame.image_available_semaphore = vk::raii::Semaphore{device, vk::SemaphoreCreateInfo{}};
-        frame.render_finished_semaphore = vk::raii::Semaphore(device, vk::SemaphoreCreateInfo{});
-        frame.in_flight_fence = vk::raii::Fence{device,
-                                                {
-                                                    .flags = vk::FenceCreateFlagBits::eSignaled,
-                                                }};
-    }
-}
-
-void VulkanRenderer::RecordCommands(FrameInFlight& frame, std::size_t image_index) {
-    const auto& cmd = frame.command_buffer;
-
-    CommandBufferContext cmd_context{cmd, {}};
-    frame.uniform_buffer->Upload(frame.command_buffer);
-
-    CommandBufferRenderPassContext render_pass_context{
-        cmd,
-        {
-            .renderPass = *render_pass,
-            .framebuffer = *framebuffers[image_index],
-            .renderArea =
-                {
-                    .offset = {},
-                    .extent = extent,
-                },
-            .clearValueCount = 1,
-            .pClearValues =
-                TempArr<vk::ClearValue>{
-                    {{{{0.0f, 0.0f, 0.0f, 1.0f}}}},
-                },
+        }},
+        .push_constants = {
+            PushConstant<glm::mat4>(vk::ShaderStageFlagBits::eVertex),
         },
-        vk::SubpassContents::eInline};
+    });
+    // clang-format on
 
-    cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *pipeline);
-    cmd.bindVertexBuffers(0, {**vertex_buffer}, {0});
-    cmd.bindIndexBuffer(**index_buffer, 0, vk::IndexType::eUint16);
+    swap_chain->CreateFramebuffers(pipeline->render_pass);
 
-    // Dynamic states
-    cmd.setViewport(0, {{
-                           .x = 0.0f,
-                           .y = 0.0f,
-                           .width = static_cast<float>(extent.width),
-                           .height = static_cast<float>(extent.height),
-                           .minDepth = 0.0f,
-                           .maxDepth = 1.0f,
-                       }});
-    cmd.setScissor(0, {{
-                          .offset = {},
-                          .extent = extent,
-                      }});
-
-    cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *pipeline_layout, 0,
-                           {*frame.descriptor_set}, {});
-    cmd.pushConstants<glm::mat4>(*pipeline_layout, vk::ShaderStageFlagBits::eVertex, 0,
-                                 {GetPushConstant()});
-    cmd.drawIndexed(6, 1, 0, 0, 0);
+    // Assign buffers
+    pipeline->vertex_buffers = {**vertex_buffer};
+    pipeline->index_buffer = **index_buffer;
+    pipeline->index_buffer_type = vk::IndexType::eUint16;
 }
+
+// void VulkanRenderer::CreateRenderTargets() {
+//     Helpers::OneTimeCommandContext context{device, command_pool, graphics_queue};
+
+//     for (auto& frame : frames_in_flight) {
+//         frame.render_target =
+//             std::make_unique<VulkanImage>(*allocator,
+//                                           vk::ImageCreateInfo{
+//                                               .imageType = vk::ImageType::e2D,
+//                                               .format = vk::Format::eR8G8B8A8Srgb,
+//                                               .extent =
+//                                                   {
+//                                                       .width = extent.width,
+//                                                       .height = extent.height,
+//                                                       .depth = 1,
+//                                                   },
+//                                               .mipLevels = 1,
+//                                               .arrayLayers = 1,
+//                                               .usage = vk::ImageUsageFlagBits::eColorAttachment |
+//                                                        vk::ImageUsageFlagBits::eSampled,
+//                                               .initialLayout = vk::ImageLayout::eUndefined,
+//                                           },
+//                                           VmaAllocationCreateInfo{
+//                                               .flags =
+//                                               VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT, .usage
+//                                               = VMA_MEMORY_USAGE_AUTO, .priority = 1.0f,
+//                                           });
+
+//         Helpers::ImageLayoutTransition(
+//             *context, frame.render_target,
+//             {
+//                 .srcStageMask = vk::PipelineStageFlagBits2::eTopOfPipe,
+//                 .srcAccessMask = vk::AccessFlags2{},
+//                 .dstStageMask = vk::PipelineStageFlagBits2::eBottomOfPipe,
+//                 .dstAccessMask = vk::AccessFlags2{},
+//                 .oldLayout = vk::ImageLayout::eUndefined,
+//                 .newLayout = vk::ImageLayout::eGeneral,
+//                 .subresourceRange =
+//                     {
+//                         .baseMipLevel = 0,
+//                         .levelCount = 1,
+//                     },
+//             });
+
+//         frame.render_target_view =
+//             vk::raii::ImageView{device,
+//                                 {
+//                                     .image = **frame.render_target,
+//                                     .viewType = vk::ImageViewType::e2D,
+//                                     .format = vk::Format::eR8G8B8A8Srgb,
+//                                     .subresourceRange =
+//                                         {
+//                                             .aspectMask = vk::ImageAspectFlagBits::eColor,
+//                                             .baseMipLevel = 0,
+//                                             .levelCount = 1,
+//                                             .baseArrayLayer = 0,
+//                                             .layerCount = 1,
+//                                         },
+//                                 }};
+//         frame.render_target_framebuffer = vk::raii::Framebuffer{
+//             device, vk::FramebufferCreateInfo{
+//                         .renderPass = *render_pass,
+//                         .attachmentCount = 1,
+//                         .pAttachments = TempArr<vk::ImageView>{*frame.render_target_view},
+//                         .width = extent.width,
+//                         .height = extent.height,
+//                         .layers = 1,
+//                     }};
+//     }
+// }
+
+// void VulkanRenderer::RecordPostProcessCommands(FrameInFlight& frame, std::size_t image_index) {
+//     const auto& cmd = frame.command_buffer;
+
+//     Helpers::CommandBufferContext cmd_context{cmd, {}};
+//     Helpers::CommandBufferRenderPassContext render_pass_context{
+//         cmd,
+//         {
+//             .renderPass = *render_pass,
+//             .framebuffer = *framebuffers[image_index],
+//             .renderArea =
+//                 {
+//                     .offset = {},
+//                     .extent = extent,
+//                 },
+//             .clearValueCount = 1,
+//             .pClearValues =
+//                 TempArr<vk::ClearValue>{
+//                     {{{{0.0f, 0.0f, 0.0f, 1.0f}}}},
+//                 },
+//         },
+//         vk::SubpassContents::eInline};
+
+//     cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *pp_pipeline);
+//     // Dynamic states
+//     cmd.setViewport(0, {{
+//                            .x = 0.0f,
+//                            .y = 0.0f,
+//                            .width = static_cast<float>(extent.width),
+//                            .height = static_cast<float>(extent.height),
+//                            .minDepth = 0.0f,
+//                            .maxDepth = 1.0f,
+//                        }});
+//     cmd.setScissor(0, {{
+//                           .offset = {},
+//                           .extent = extent,
+//                       }});
+
+//     cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *pp_pipeline_layout, 0,
+//                            {*frame.pp_descriptor_set}, {});
+//     cmd.draw(3, 1, 0, 0);
+// }
 
 VulkanRenderer::UniformBufferObject VulkanRenderer::GetUniformBufferObject() const {
     static auto startTime = std::chrono::high_resolution_clock::now();
@@ -676,8 +303,9 @@ VulkanRenderer::UniformBufferObject VulkanRenderer::GetUniformBufferObject() con
     const float time =
         std::chrono::duration<float, std::chrono::seconds::period>(currentTime - startTime).count();
 
-    auto proj = glm::perspective(glm::radians(45.0f),
-                                 extent.width / static_cast<float>(extent.height), 0.1f, 10.0f);
+    auto proj = glm::perspective(
+        glm::radians(45.0f),
+        swap_chain->extent.width / static_cast<float>(swap_chain->extent.height), 0.1f, 10.0f);
     proj[1][1] *= -1;
     return {
         .model =
@@ -695,8 +323,9 @@ glm::mat4 VulkanRenderer::GetPushConstant() const {
     const float time =
         std::chrono::duration<float, std::chrono::seconds::period>(currentTime - startTime).count();
 
-    auto proj = glm::perspective(glm::radians(45.0f),
-                                 extent.width / static_cast<float>(extent.height), 0.1f, 10.0f);
+    auto proj = glm::perspective(
+        glm::radians(45.0f),
+        swap_chain->extent.width / static_cast<float>(swap_chain->extent.height), 0.1f, 10.0f);
     proj[1][1] *= -1;
 
     return proj *
@@ -706,62 +335,61 @@ glm::mat4 VulkanRenderer::GetPushConstant() const {
 }
 
 void VulkanRenderer::DrawFrame() {
-    allocator->CleanupStagingBuffers();
+    device->allocator->CleanupStagingBuffers();
 
-    auto& frame = frames_in_flight[current_frame];
-    if (device.waitForFences({*frame.in_flight_fence}, VK_TRUE, std::numeric_limits<u64>::max()) !=
-        vk::Result::eSuccess) {
+    const auto& frame = pipeline->AcquireNextFrame();
+    pipeline->WriteUniformObject<UniformBufferObject>({GetUniformBufferObject()});
 
-        throw std::runtime_error("Failed to wait for fences");
-    }
-
-    const auto& [result, image_index] = swap_chain.acquireNextImage(
-        std::numeric_limits<u64>::max(), *frame.image_available_semaphore);
-    if (result == vk::Result::eErrorOutOfDateKHR) {
-        SPDLOG_WARN("Swapchain is out of date, ignoring frame");
-        return;
-    } else if (result != vk::Result::eSuccess) {
-        throw std::runtime_error("Failed to acquire next image");
-    }
-
-    device.resetFences({*frame.in_flight_fence});
-
-    // Update uniform buffer
-    frame.uniform_buffer->Update(GetUniformBufferObject());
-
-    frame.command_buffer.reset();
-    RecordCommands(frame, image_index);
-
-    graphics_queue.submit(
-        {{.waitSemaphoreCount = 1,
-          .pWaitSemaphores = TempArr<vk::Semaphore>{*frame.image_available_semaphore},
-          .pWaitDstStageMask =
-              TempArr<vk::PipelineStageFlags>{vk::PipelineStageFlagBits::eColorAttachmentOutput},
-          .commandBufferCount = 1,
-          .pCommandBuffers = TempArr<vk::CommandBuffer>{*frame.command_buffer},
-          .signalSemaphoreCount = 1,
-          .pSignalSemaphores = TempArr<vk::Semaphore>{*frame.render_finished_semaphore}}},
-        *frame.in_flight_fence);
-
-    const auto present_result = present_queue.presentKHR({
-        .waitSemaphoreCount = 1,
-        .pWaitSemaphores = TempArr<vk::Semaphore>{*frame.render_finished_semaphore},
-        .swapchainCount = 1,
-        .pSwapchains = TempArr<vk::SwapchainKHR>{*swap_chain},
-        .pImageIndices = TempArr<u32>{image_index},
+    const auto& framebuffer = swap_chain->AcquireImage(*frame.render_start_semaphore);
+    pipeline->BeginFrame({
+        .framebuffer = *framebuffer->get(),
+        .renderArea =
+            {
+                .extent = swap_chain->extent,
+            },
     });
-    if (present_result != vk::Result::eSuccess) {
-        throw std::runtime_error("Failed to present");
-    }
+    frame.command_buffer.pushConstants<glm::mat4>(
+        *pipeline->pipeline_layout, vk::ShaderStageFlagBits::eVertex, 0, {GetPushConstant()});
 
-    current_frame = (current_frame + 1) % frames_in_flight.size();
+    // Dynamic states
+    frame.command_buffer.setViewport(0, {{
+                                            .x = 0.0f,
+                                            .y = 0.0f,
+                                            .width = static_cast<float>(swap_chain->extent.width),
+                                            .height = static_cast<float>(swap_chain->extent.height),
+                                            .minDepth = 0.0f,
+                                            .maxDepth = 1.0f,
+                                        }});
+    frame.command_buffer.setScissor(0, {{
+                                           .extent = swap_chain->extent,
+                                       }});
+
+    frame.command_buffer.drawIndexed(6, 1, 0, 0, 0);
+    pipeline->EndFrame();
+
+    device->graphics_queue.submit(
+        {
+            {
+                .waitSemaphoreCount = 1,
+                .pWaitSemaphores = TempArr<vk::Semaphore>{*frame.render_start_semaphore},
+                .pWaitDstStageMask =
+                    TempArr<vk::PipelineStageFlags>{
+                        vk::PipelineStageFlagBits::eColorAttachmentOutput},
+                .commandBufferCount = 1,
+                .pCommandBuffers = TempArr<vk::CommandBuffer>{*frame.command_buffer},
+                .signalSemaphoreCount = 1,
+                .pSignalSemaphores = TempArr<vk::Semaphore>{*frame.render_finished_semaphore},
+            },
+        },
+        *frame.in_flight_fence);
+    swap_chain->Present(*frame.render_finished_semaphore);
 }
 
 void VulkanRenderer::RecreateSwapchain(const vk::Extent2D& actual_extent) {
-    device.waitIdle();
+    (*device)->waitIdle();
 
-    CreateSwapchain(actual_extent);
-    CreateFramebuffers();
+    swap_chain = std::make_unique<VulkanSwapchain>(*device, actual_extent);
+    swap_chain->CreateFramebuffers(pipeline->render_pass);
 }
 
 } // namespace Renderer

@@ -12,6 +12,7 @@
 #include "common/file_util.h"
 #include "core/renderer/vulkan_allocator.h"
 #include "core/renderer/vulkan_buffer.h"
+#include "core/renderer/vulkan_device.h"
 #include "core/renderer/vulkan_texture.h"
 
 namespace Renderer {
@@ -74,9 +75,7 @@ static void StbiWriteCallback(void* context, void* data, int size) {
     out_file.write(reinterpret_cast<const char*>(data), size);
 }
 
-VulkanTexture::VulkanTexture(VulkanAllocator& allocator, const vk::raii::CommandPool& command_pool,
-                             const vk::raii::Queue& queue, const std::filesystem::path& path) {
-
+VulkanTexture::VulkanTexture(VulkanDevice& device, const std::filesystem::path& path) {
     // Load image file
     auto image_data = std::make_unique<StbImage>(path);
     width = static_cast<u32>(image_data->width);
@@ -86,7 +85,7 @@ VulkanTexture::VulkanTexture(VulkanAllocator& allocator, const vk::raii::Command
 
     // Create image & image_view
     image = std::make_unique<VulkanImage>(
-        allocator,
+        *device.allocator,
         vk::ImageCreateInfo{
             .imageType = vk::ImageType::e2D,
             .format = vk::Format::eR8G8B8A8Srgb,
@@ -105,8 +104,8 @@ VulkanTexture::VulkanTexture(VulkanAllocator& allocator, const vk::raii::Command
         VmaAllocationCreateInfo{
             .usage = VMA_MEMORY_USAGE_AUTO,
         });
-    image_view = vk::raii::ImageView{allocator.device,
-                                     vk::ImageViewCreateInfo{
+    image_view =
+        vk::raii::ImageView{*device, vk::ImageViewCreateInfo{
                                          .image = **image,
                                          .viewType = vk::ImageViewType::e2D,
                                          .format = vk::Format::eR8G8B8A8Srgb,
@@ -178,38 +177,26 @@ VulkanTexture::VulkanTexture(VulkanAllocator& allocator, const vk::raii::Command
         }
 
         // Upload mipmap
-        const auto& handle = allocator.CreateStagingBuffer(command_pool, queue, image_data->size);
+        auto handle = device.allocator->CreateStagingBuffer(device.command_pool, image_data->size);
         const auto& buffer = *handle;
 
         std::memcpy(buffer.allocation_info.pMappedData, image_data->pixels, image_data->size);
-        vmaFlushAllocation(*allocator, buffer.allocation, 0, VK_WHOLE_SIZE);
+        vmaFlushAllocation(**device.allocator, buffer.allocation, 0, VK_WHOLE_SIZE);
 
-        const auto LayoutTransition = [this, &buffer](vk::ImageMemoryBarrier2 params) {
-            // Fill out remainder of params
-            params.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-            params.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-            params.image = **image;
-            params.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eColor;
-            params.subresourceRange.baseArrayLayer = 0;
-            params.subresourceRange.layerCount = 1;
-            buffer.command_buffer.pipelineBarrier2({
-                .imageMemoryBarrierCount = 1,
-                .pImageMemoryBarriers = &params,
-            });
-        };
-        LayoutTransition({
-            .srcStageMask = vk::PipelineStageFlagBits2::eTopOfPipe,
-            .srcAccessMask = vk::AccessFlags2{},
-            .dstStageMask = vk::PipelineStageFlagBits2::eCopy,
-            .dstAccessMask = vk::AccessFlagBits2::eTransferWrite,
-            .oldLayout = vk::ImageLayout::eUndefined,
-            .newLayout = vk::ImageLayout::eTransferDstOptimal,
-            .subresourceRange =
-                {
-                    .baseMipLevel = i,
-                    .levelCount = 1,
-                },
-        });
+        Helpers::ImageLayoutTransition(buffer.command_buffer, image,
+                                       {
+                                           .srcStageMask = vk::PipelineStageFlagBits2::eTopOfPipe,
+                                           .srcAccessMask = vk::AccessFlags2{},
+                                           .dstStageMask = vk::PipelineStageFlagBits2::eCopy,
+                                           .dstAccessMask = vk::AccessFlagBits2::eTransferWrite,
+                                           .oldLayout = vk::ImageLayout::eUndefined,
+                                           .newLayout = vk::ImageLayout::eTransferDstOptimal,
+                                           .subresourceRange =
+                                               {
+                                                   .baseMipLevel = i,
+                                                   .levelCount = 1,
+                                               },
+                                       });
         buffer.command_buffer.copyBufferToImage(
             *buffer, **image, vk::ImageLayout::eTransferDstOptimal,
             {{
@@ -227,19 +214,23 @@ VulkanTexture::VulkanTexture(VulkanAllocator& allocator, const vk::raii::Command
                         .depth = 1,
                     },
             }});
-        LayoutTransition({
-            .srcStageMask = vk::PipelineStageFlagBits2::eTransfer,
-            .srcAccessMask = vk::AccessFlagBits2::eTransferWrite,
-            .dstStageMask = vk::PipelineStageFlagBits2::eFragmentShader,
-            .dstAccessMask = vk::AccessFlagBits2::eShaderRead,
-            .oldLayout = vk::ImageLayout::eTransferDstOptimal,
-            .newLayout = vk::ImageLayout::eShaderReadOnlyOptimal,
-            .subresourceRange =
-                {
-                    .baseMipLevel = i,
-                    .levelCount = 1,
-                },
-        });
+        Helpers::ImageLayoutTransition(
+            buffer.command_buffer, image,
+            {
+                .srcStageMask = vk::PipelineStageFlagBits2::eTransfer,
+                .srcAccessMask = vk::AccessFlagBits2::eTransferWrite,
+                .dstStageMask = vk::PipelineStageFlagBits2::eFragmentShader,
+                .dstAccessMask = vk::AccessFlagBits2::eShaderRead,
+                .oldLayout = vk::ImageLayout::eTransferDstOptimal,
+                .newLayout = vk::ImageLayout::eShaderReadOnlyOptimal,
+                .subresourceRange =
+                    {
+                        .baseMipLevel = i,
+                        .levelCount = 1,
+                    },
+            });
+
+        handle.Submit(device.graphics_queue);
 
         // In case the image is not square keep at 1
         if (mip_width > 1)

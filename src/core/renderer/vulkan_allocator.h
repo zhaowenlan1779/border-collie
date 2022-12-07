@@ -24,12 +24,12 @@ public:
                              const vk::raii::Device& device);
     ~VulkanAllocator();
 
-    // Creates a staging buffer that returns itself to the ownership of the allocator after its
-    // handle goes out of scope
-    struct StagingBufferHandle {
+    // Creates a staging buffer that returns itself to the ownership of the allocator
+    // when submitted
+    struct StagingBufferHandle : NonCopyable {
         explicit StagingBufferHandle(VulkanAllocator& allocator,
-                                     const vk::raii::CommandPool& command_pool,
-                                     const vk::raii::Queue& queue, std::size_t size);
+                                     const vk::raii::CommandPool& command_pool, std::size_t size);
+        void Submit(const vk::raii::Queue& queue);
         ~StagingBufferHandle();
 
         VulkanStagingBuffer& operator*() {
@@ -43,11 +43,10 @@ public:
     private:
         VulkanAllocator& allocator;
         std::unique_ptr<VulkanStagingBuffer> buffer;
-        const vk::raii::Queue& queue;
         vk::raii::Fence fence;
     };
-    StagingBufferHandle CreateStagingBuffer(const vk::raii::CommandPool& command_pool,
-                                            const vk::raii::Queue& queue, std::size_t size);
+    [[nodiscard]] StagingBufferHandle CreateStagingBuffer(const vk::raii::CommandPool& command_pool,
+                                                          std::size_t size);
 
     // Should be called from the render thread.
     void CleanupStagingBuffers();

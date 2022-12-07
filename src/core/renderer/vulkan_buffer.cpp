@@ -6,6 +6,7 @@
 #include "common/temp_ptr.h"
 #include "core/renderer/vulkan_allocator.h"
 #include "core/renderer/vulkan_buffer.h"
+#include "core/renderer/vulkan_device.h"
 #include "core/renderer/vulkan_helpers.hpp"
 
 namespace Renderer {
@@ -56,11 +57,9 @@ VulkanStagingBuffer::VulkanStagingBuffer(const VulkanAllocator& allocator,
 
 VulkanStagingBuffer::~VulkanStagingBuffer() = default;
 
-VulkanImmUploadBuffer::VulkanImmUploadBuffer(VulkanAllocator& allocator,
-                                             const vk::raii::CommandPool& command_pool,
-                                             const vk::raii::Queue& queue,
+VulkanImmUploadBuffer::VulkanImmUploadBuffer(VulkanDevice& device,
                                              const VulkanImmUploadBufferCreateInfo& create_info)
-    : VulkanBuffer{allocator,
+    : VulkanBuffer{*device.allocator,
                    {
                        .size = create_info.size,
                        .usage = create_info.usage | vk::BufferUsageFlagBits::eTransferDst,
@@ -69,11 +68,11 @@ VulkanImmUploadBuffer::VulkanImmUploadBuffer(VulkanAllocator& allocator,
                        .usage = VMA_MEMORY_USAGE_AUTO,
                    }} {
 
-    const auto& handle = allocator.CreateStagingBuffer(command_pool, queue, create_info.size);
+    auto handle = device.allocator->CreateStagingBuffer(device.command_pool, create_info.size);
     const auto& src_buffer = *handle;
 
     std::memcpy(src_buffer.allocation_info.pMappedData, create_info.data, create_info.size);
-    vmaFlushAllocation(*allocator, src_buffer.allocation, 0, VK_WHOLE_SIZE);
+    vmaFlushAllocation(**device.allocator, src_buffer.allocation, 0, VK_WHOLE_SIZE);
 
     // Upload
     src_buffer.command_buffer.copyBuffer(*src_buffer, buffer,
@@ -94,6 +93,7 @@ VulkanImmUploadBuffer::VulkanImmUploadBuffer(VulkanAllocator& allocator,
             .size = allocation_info.size,
         }},
     });
+    handle.Submit(device.graphics_queue);
 }
 
 VulkanImmUploadBuffer::~VulkanImmUploadBuffer() = default;

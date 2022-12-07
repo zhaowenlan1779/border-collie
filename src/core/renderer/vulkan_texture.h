@@ -14,7 +14,7 @@
 namespace Renderer {
 
 class VulkanAllocator;
-class VulkanBuffer;
+class VulkanDevice;
 
 /**
  * RAII wrapper for VMA image allocations.
@@ -38,8 +38,7 @@ private:
 
 class VulkanTexture : NonCopyable {
 public:
-    explicit VulkanTexture(VulkanAllocator& allocator, const vk::raii::CommandPool& command_pool,
-                           const vk::raii::Queue& queue, const std::filesystem::path& path);
+    explicit VulkanTexture(VulkanDevice& device, const std::filesystem::path& path);
     ~VulkanTexture();
 
     u32 width{};

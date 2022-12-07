@@ -5,6 +5,7 @@
 #pragma once
 
 #include <memory>
+#include <tuple>
 #include <type_traits>
 #include <utility>
 #include <boost/pfr.hpp>
@@ -15,6 +16,10 @@
 #include "common/temp_ptr.h"
 
 namespace Renderer {
+class VulkanImage;
+}
+
+namespace Renderer::Helpers {
 
 // RAII helpers
 
@@ -83,6 +88,35 @@ struct CommandBufferRenderPassContext {
 
     const vk::raii::CommandBuffer& command_buffer;
 };
+
+// Structure chain that only constrains the type of the first element
+template <typename T>
+struct GenericStructureChain {
+    template <typename... Args>
+    GenericStructureChain(T&& t, Args&&... args) {
+        using TupleType = vk::StructureChain<std::remove_cvref_t<T>, std::remove_cvref_t<Args>...>;
+        static_assert(std::is_trivially_destructible_v<TupleType>);
+
+        data = std::make_unique<u8[]>(sizeof(TupleType));
+        auto* tuple = new (data.get()) TupleType{std::forward<T>(t), std::forward<Args>(args)...};
+        first_ptr = &std::get<0>(*tuple);
+    }
+
+    operator T*() {
+        return first_ptr;
+    }
+
+    operator const T*() const {
+        return first_ptr;
+    }
+
+    std::unique_ptr<u8[]> data;
+    T* first_ptr{};
+};
+
+void ImageLayoutTransition(const vk::raii::CommandBuffer& command_buffer,
+                           const std::unique_ptr<VulkanImage>& image,
+                           vk::ImageMemoryBarrier2 params);
 
 // Attributes helpers
 
@@ -298,18 +332,48 @@ consteval bool VerifyAlignmentSingle(T) {
         std::make_index_sequence<boost::pfr::tuple_size_v<T>>());
 }
 
+template <typename T>
+consteval bool VerifyAlignmentImpl(T);
+
+template <glm::length_t L, typename T, glm::qualifier Q>
+consteval bool VerifyAlignmentImpl(glm::vec<L, T, Q>) {
+    return true;
+}
+
+template <typename T>
+consteval bool VerifyAlignmentImpl(T[]) {
+    throw "Raw arrays are prohibited because boost::pfr does not support them";
+    return false;
+}
+
+template <typename T, std::size_t N>
+consteval bool VerifyAlignmentImpl(std::array<T, N> a) {
+    CalculateAlignment(a); // Ensure stride
+    return VerifyAlignmentSingle(T{});
+}
+
+template <glm::length_t C, glm::length_t R, typename T, glm::qualifier Q>
+consteval bool VerifyAlignmentImpl(glm::mat<C, R, T, Q>) {
+    return true;
+}
+
 // Verifies alignment requirements for the structure itself and sub-structures.
 template <typename T, std::size_t... Idxs>
-consteval bool VerifyAlignmentImpl(std::index_sequence<Idxs...>) {
+consteval bool VerifyAlignmentStructureImpl(std::index_sequence<Idxs...>) {
     return VerifyAlignmentSingle(T{}) &&
            (... && VerifyAlignmentSingle(boost::pfr::tuple_element_t<Idxs, T>{}));
+}
+
+template <typename T>
+consteval bool VerifyAlignmentImpl(T) {
+    return VerifyAlignmentStructureImpl<T>(std::make_index_sequence<boost::pfr::tuple_size_v<T>>());
 }
 
 } // namespace detail
 
 template <typename T>
 consteval bool VerifyLayoutStd140() {
-    return detail::VerifyAlignmentImpl<T>(std::make_index_sequence<boost::pfr::tuple_size_v<T>>());
+    return detail::VerifyAlignmentImpl(T{});
 }
 
-} // namespace Renderer
+} // namespace Renderer::Helpers

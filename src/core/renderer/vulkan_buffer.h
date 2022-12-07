@@ -14,6 +14,7 @@
 namespace Renderer {
 
 class VulkanAllocator;
+class VulkanDevice;
 
 /**
  * RAII wrapper for VMA buffer allocations.
@@ -61,9 +62,7 @@ struct VulkanImmUploadBufferCreateInfo {
  */
 class VulkanImmUploadBuffer : public VulkanBuffer {
 public:
-    explicit VulkanImmUploadBuffer(VulkanAllocator& allocator,
-                                   const vk::raii::CommandPool& command_pool,
-                                   const vk::raii::Queue& queue,
+    explicit VulkanImmUploadBuffer(VulkanDevice& device,
                                    const VulkanImmUploadBufferCreateInfo& create_info);
     ~VulkanImmUploadBuffer();
 };
@@ -84,7 +83,7 @@ public:
 
 template <typename T>
 class VulkanUniformBufferObject : public VulkanUniformBuffer {
-    static_assert(VerifyLayoutStd140<T>());
+    static_assert(Helpers::VerifyLayoutStd140<T>());
 
 public:
     explicit VulkanUniformBufferObject(const VulkanAllocator& allocator,

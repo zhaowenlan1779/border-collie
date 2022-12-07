@@ -17,6 +17,6 @@ void InitializeLogging() {
 #endif
     }
 
-    spdlog::set_pattern("%^[%T.%e] [%l] %@:%! %v%$");
+    spdlog::set_pattern("%^[%T.%e] [%l] %@:%!: %v%$");
 }
 } // namespace Common

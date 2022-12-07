@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <limits>
 #include <ranges>
+#include <spdlog/spdlog.h>
 #include "common/ranges.h"
 #include "common/temp_ptr.h"
 #include "core/renderer/vulkan_allocator.h"
@@ -50,16 +51,15 @@ VulkanAllocator::~VulkanAllocator() {
 
 VulkanAllocator::StagingBufferHandle::StagingBufferHandle(VulkanAllocator& allocator_,
                                                           const vk::raii::CommandPool& command_pool,
-                                                          const vk::raii::Queue& queue_,
                                                           std::size_t size)
     : allocator(allocator_),
       buffer(std::make_unique<VulkanStagingBuffer>(allocator, command_pool, size)),
-      queue(queue_), fence{allocator.device, vk::FenceCreateInfo{}} {
+      fence{allocator.device, vk::FenceCreateInfo{}} {
 
     buffer->command_buffer.begin({.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
 }
 
-VulkanAllocator::StagingBufferHandle::~StagingBufferHandle() {
+void VulkanAllocator::StagingBufferHandle::Submit(const vk::raii::Queue& queue) {
     buffer->command_buffer.end();
     queue.submit({{
                      .commandBufferCount = 1,
@@ -70,11 +70,17 @@ VulkanAllocator::StagingBufferHandle::~StagingBufferHandle() {
     allocator.staging_buffers.emplace_back(std::move(buffer), std::move(fence));
 }
 
+VulkanAllocator::StagingBufferHandle::~StagingBufferHandle() {
+    if (buffer) {
+        SPDLOG_WARN("Staging buffer not uploaded");
+    }
+}
+
 VulkanAllocator::StagingBufferHandle VulkanAllocator::CreateStagingBuffer(
-    const vk::raii::CommandPool& command_pool, const vk::raii::Queue& queue, std::size_t size) {
+    const vk::raii::CommandPool& command_pool, std::size_t size) {
 
     CleanupStagingBuffers();
-    return StagingBufferHandle{*this, command_pool, queue, size};
+    return StagingBufferHandle{*this, command_pool, size};
 }
 
 void VulkanAllocator::CleanupStagingBuffers() {

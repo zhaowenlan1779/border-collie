@@ -11,7 +11,7 @@ namespace Common {
 
 template <typename Container, std::ranges::common_range Range>
 Container FromRange(Range&& r) {
-    return Container{begin(r), end(r)};
+    return Container{std::ranges::begin(r), std::ranges::end(r)};
 }
 
 template <std::ranges::range Range>
