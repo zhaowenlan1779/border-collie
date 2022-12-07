@@ -388,6 +388,7 @@ void VulkanRenderer::DrawFrame() {
 void VulkanRenderer::RecreateSwapchain(const vk::Extent2D& actual_extent) {
     (*device)->waitIdle();
 
+    swap_chain.reset(); // Need to destroy old first
     swap_chain = std::make_unique<VulkanSwapchain>(*device, actual_extent);
     swap_chain->CreateFramebuffers(pipeline->render_pass);
 }
