@@ -453,6 +453,19 @@ void VulkanRenderer::RecreateSwapchain(const vk::Extent2D& actual_extent) {
 
     CreateRenderTargets();
     CreateRenderTargetFramebuffers();
+    pp_pipeline->UpdateDescriptor(0, 0,
+                                  {
+                                      .type = vk::DescriptorType::eCombinedImageSampler,
+                                      .count = 1,
+                                      .images = {{
+                                          .images =
+                                              {
+                                                  *offscreen_frames[0].image_view,
+                                                  *offscreen_frames[1].image_view,
+                                              },
+                                          .layout = vk::ImageLayout::eGeneral,
+                                      }},
+                                  });
 }
 
 } // namespace Renderer

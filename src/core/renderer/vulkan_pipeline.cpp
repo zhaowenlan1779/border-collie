@@ -111,84 +111,9 @@ VulkanPipeline::VulkanPipeline(const VulkanDevice& device_,
     for (const auto& set : descriptor_sets) {
         u32 binding_count = 0;
         for (const auto& binding : set) {
-            for (std::size_t i = 0; i < frames_in_flight.size(); ++i) {
-                auto& frame = frames_in_flight[i];
-
-                if (!binding.images.empty()) { // Images
-                    device->updateDescriptorSets(
-                        {{
-                            .dstSet = *frame.descriptor_sets[set_count],
-                            .dstBinding = binding_count,
-                            .descriptorCount = static_cast<u32>(binding.images.size()),
-                            .descriptorType = binding.type,
-                            .pImageInfo = Common::VectorFromRange(
-                                              binding.images |
-                                              std::views::transform([this, i](const auto& image) {
-                                                  return vk::DescriptorImageInfo{
-                                                      .sampler = *sampler,
-                                                      .imageView = image.images.size() > i
-                                                                       ? *(image.images.begin() + i)
-                                                                       : *image.images.begin(),
-                                                      .imageLayout = image.layout,
-                                                  };
-                                              }))
-                                              .data(),
-                        }},
-                        {});
-                } else if (!binding.buffers.empty()) { // Buffers
-                    device->updateDescriptorSets(
-                        {{
-                            .dstSet = *frame.descriptor_sets[set_count],
-                            .dstBinding = binding_count,
-                            .descriptorCount = static_cast<u32>(binding.buffers.size()),
-                            .descriptorType = binding.type,
-                            .pBufferInfo = Common::VectorFromRange(
-                                               binding.buffers |
-                                               std::views::transform([i](const auto& buffer) {
-                                                   return vk::DescriptorBufferInfo{
-                                                       .buffer = buffer.buffers.size() > i
-                                                                     ? *(buffer.buffers.begin() + i)
-                                                                     : *buffer.buffers.begin(),
-                                                       .offset = 0,
-                                                       .range = VK_WHOLE_SIZE,
-                                                   };
-                                               }))
-                                               .data(),
-                        }},
-                        {});
-                } else if (binding.type == vk::DescriptorType::eUniformBuffer &&
-                           binding.size != 0) { // Create
-
-                    frame.uniform_buffers.emplace_back();
-                    for (u32 i = 0; i < binding.count; ++i) {
-                        frame.uniform_buffers.back().emplace_back(FrameInFlight::UniformBuffer{
-                            std::make_unique<VulkanUniformBuffer>(*device.allocator, binding.size),
-                            ToPipelineStages(binding.stages),
-                        });
-                    }
-                    device->updateDescriptorSets(
-                        {{
-                            .dstSet = *frame.descriptor_sets[set_count],
-                            .dstBinding = binding_count,
-                            .descriptorCount = binding.count,
-                            .descriptorType = binding.type,
-                            .pBufferInfo = Common::VectorFromRange(
-                                               frame.uniform_buffers.back() |
-                                               std::views::transform([](const auto& uniform) {
-                                                   return vk::DescriptorBufferInfo{
-                                                       .buffer = *uniform.buffer->dst_buffer,
-                                                       .offset = 0,
-                                                       .range = VK_WHOLE_SIZE,
-                                                   };
-                                               }))
-                                               .data(),
-                        }},
-                        {});
-                }
-            }
+            UpdateDescriptor(set_count, binding_count, binding, true);
             binding_count++;
         }
-
         set_count++;
     }
 
@@ -272,6 +197,85 @@ void VulkanPipeline::EndFrame() {
 
     frame.command_buffer.end();
     device->resetFences({*frame.in_flight_fence});
+}
+
+void VulkanPipeline::UpdateDescriptor(u32 set_idx, u32 binding_idx,
+                                      const DescriptorBinding& binding, bool create) {
+    for (std::size_t i = 0; i < frames_in_flight.size(); ++i) {
+        auto& frame = frames_in_flight[i];
+
+        if (!binding.images.empty()) { // Images
+            device->updateDescriptorSets(
+                {{
+                    .dstSet = *frame.descriptor_sets[set_idx],
+                    .dstBinding = binding_idx,
+                    .descriptorCount = static_cast<u32>(binding.images.size()),
+                    .descriptorType = binding.type,
+                    .pImageInfo =
+                        Common::VectorFromRange(
+                            binding.images | std::views::transform([this, i](const auto& image) {
+                                return vk::DescriptorImageInfo{
+                                    .sampler = *sampler,
+                                    .imageView = image.images.size() > i
+                                                     ? *(image.images.begin() + i)
+                                                     : *image.images.begin(),
+                                    .imageLayout = image.layout,
+                                };
+                            }))
+                            .data(),
+                }},
+                {});
+        } else if (!binding.buffers.empty()) { // Buffers
+            device->updateDescriptorSets(
+                {{
+                    .dstSet = *frame.descriptor_sets[set_idx],
+                    .dstBinding = binding_idx,
+                    .descriptorCount = static_cast<u32>(binding.buffers.size()),
+                    .descriptorType = binding.type,
+                    .pBufferInfo =
+                        Common::VectorFromRange(
+                            binding.buffers | std::views::transform([i](const auto& buffer) {
+                                return vk::DescriptorBufferInfo{
+                                    .buffer = buffer.buffers.size() > i
+                                                  ? *(buffer.buffers.begin() + i)
+                                                  : *buffer.buffers.begin(),
+                                    .offset = 0,
+                                    .range = VK_WHOLE_SIZE,
+                                };
+                            }))
+                            .data(),
+                }},
+                {});
+        } else if (create && binding.type == vk::DescriptorType::eUniformBuffer &&
+                   binding.size != 0) { // Create
+
+            frame.uniform_buffers.emplace_back();
+            for (u32 i = 0; i < binding.count; ++i) {
+                frame.uniform_buffers.back().emplace_back(FrameInFlight::UniformBuffer{
+                    std::make_unique<VulkanUniformBuffer>(*device.allocator, binding.size),
+                    ToPipelineStages(binding.stages),
+                });
+            }
+            device->updateDescriptorSets(
+                {{
+                    .dstSet = *frame.descriptor_sets[set_idx],
+                    .dstBinding = binding_idx,
+                    .descriptorCount = binding.count,
+                    .descriptorType = binding.type,
+                    .pBufferInfo =
+                        Common::VectorFromRange(frame.uniform_buffers.back() |
+                                                std::views::transform([](const auto& uniform) {
+                                                    return vk::DescriptorBufferInfo{
+                                                        .buffer = *uniform.buffer->dst_buffer,
+                                                        .offset = 0,
+                                                        .range = VK_WHOLE_SIZE,
+                                                    };
+                                                }))
+                            .data(),
+                }},
+                {});
+        }
+    }
 }
 
 } // namespace Renderer

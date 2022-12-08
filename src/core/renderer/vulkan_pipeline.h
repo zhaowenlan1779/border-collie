@@ -98,6 +98,9 @@ public:
         }
     }
 
+    void UpdateDescriptor(u32 set_idx, u32 binding_idx, const DescriptorBinding& binding,
+                          bool create = false);
+
     FrameInFlight& AcquireNextFrame();
     void BeginFrame();
     void EndFrame();
