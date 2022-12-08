@@ -82,6 +82,17 @@ VulkanGraphicsPipeline::VulkanGraphicsPipeline(const VulkanDevice& device,
     pipeline_info.renderPass = *render_pass;
 
     pipeline = vk::raii::Pipeline{*device, device.pipeline_cache, pipeline_info};
+
+    const auto IsDynamicState = [&pipeline_info](vk::DynamicState state) {
+        return std::find(pipeline_info.pDynamicState->pDynamicStates,
+                         pipeline_info.pDynamicState->pDynamicStates +
+                             pipeline_info.pDynamicState->dynamicStateCount,
+                         state) != pipeline_info.pDynamicState->pDynamicStates +
+                                       pipeline_info.pDynamicState->dynamicStateCount;
+    };
+    if (IsDynamicState(vk::DynamicState::eViewport) && IsDynamicState(vk::DynamicState::eScissor)) {
+        dynamic_viewport_scissor = true;
+    }
 }
 
 VulkanGraphicsPipeline::~VulkanGraphicsPipeline() = default;
@@ -114,6 +125,21 @@ void VulkanGraphicsPipeline::BeginFrame(vk::RenderPassBeginInfo render_pass_begi
         frame.descriptor_sets | std::views::transform(&vk::raii::DescriptorSet::operator*));
     command_buffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *pipeline_layout, 0,
                                       raw_descriptor_sets, {});
+
+    if (dynamic_viewport_scissor) {
+        command_buffer.setViewport(
+            0, {{
+                   .x = 0.0f,
+                   .y = 0.0f,
+                   .width = static_cast<float>(render_pass_begin.renderArea.extent.width),
+                   .height = static_cast<float>(render_pass_begin.renderArea.extent.height),
+                   .minDepth = 0.0f,
+                   .maxDepth = 1.0f,
+               }});
+        command_buffer.setScissor(0, {{
+                                         .extent = render_pass_begin.renderArea.extent,
+                                     }});
+    }
 }
 
 void VulkanGraphicsPipeline::EndFrame() {

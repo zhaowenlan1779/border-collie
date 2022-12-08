@@ -33,6 +33,7 @@ public:
     std::vector<vk::Buffer> vertex_buffers;
     vk::Buffer index_buffer{};
     vk::IndexType index_buffer_type = vk::IndexType::eUint32;
+    bool dynamic_viewport_scissor = false;
 };
 
 } // namespace Renderer

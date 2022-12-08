@@ -20,6 +20,7 @@ class VulkanImmUploadBuffer;
 class VulkanGraphicsPipeline;
 class VulkanSwapchain;
 class VulkanTexture;
+struct FrameInFlight;
 
 /**
  * Base class for Vulkan based renderers.
@@ -37,10 +38,13 @@ public:
 
     virtual void Init(vk::SurfaceKHR surface, const vk::Extent2D& actual_extent);
     void DrawFrame();
+    const FrameInFlight& DrawFrameOffscreen();
+    void PostprocessAndPresent(const FrameInFlight& offscreen_frame);
     void RecreateSwapchain(const vk::Extent2D& actual_extent);
 
 protected:
-    void LoadBuffers();
+    void CreateRenderTargets();
+    void CreateRenderTargetFramebuffers();
 
     struct UniformBufferObject;
     UniformBufferObject GetUniformBufferObject() const;
@@ -48,9 +52,18 @@ protected:
 
     std::unique_ptr<VulkanContext> context;
     std::unique_ptr<VulkanDevice> device;
-    std::unique_ptr<VulkanGraphicsPipeline> pipeline;
-    std::unique_ptr<VulkanGraphicsPipeline> pp_pipeline;
     std::unique_ptr<VulkanSwapchain> swap_chain;
+
+    struct OffscreenFrame {
+        std::unique_ptr<VulkanImage> image;
+        vk::raii::ImageView image_view = nullptr;
+        vk::raii::Framebuffer framebuffer = nullptr;
+    };
+    std::array<OffscreenFrame, 2> offscreen_frames;
+    std::size_t current_frame = 0;
+    std::unique_ptr<VulkanGraphicsPipeline> pipeline;
+
+    std::unique_ptr<VulkanGraphicsPipeline> pp_pipeline;
 
     std::unique_ptr<VulkanImmUploadBuffer> vertex_buffer{};
     std::unique_ptr<VulkanImmUploadBuffer> index_buffer{};

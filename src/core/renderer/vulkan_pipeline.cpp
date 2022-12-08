@@ -27,6 +27,10 @@ VulkanPipeline::VulkanPipeline(const VulkanDevice& device_,
                                const vk::ArrayProxy<const vk::PushConstantRange>& push_constants)
     : device(device_) {
 
+    for (std::size_t i = 0; i < frames_in_flight.size(); ++i) {
+        frames_in_flight[i].index = i;
+    }
+
     // Sampler
     sampler = vk::raii::Sampler{
         *device,
@@ -107,12 +111,9 @@ VulkanPipeline::VulkanPipeline(const VulkanDevice& device_,
     for (const auto& set : descriptor_sets) {
         u32 binding_count = 0;
         for (const auto& binding : set) {
-            if (binding.buffers.empty() && binding.images.empty() && binding.size == 0) {
-                binding_count++;
-                continue;
-            }
+            for (std::size_t i = 0; i < frames_in_flight.size(); ++i) {
+                auto& frame = frames_in_flight[i];
 
-            for (auto& frame : frames_in_flight) {
                 if (!binding.images.empty()) { // Images
                     device->updateDescriptorSets(
                         {{
@@ -122,10 +123,12 @@ VulkanPipeline::VulkanPipeline(const VulkanDevice& device_,
                             .descriptorType = binding.type,
                             .pImageInfo = Common::VectorFromRange(
                                               binding.images |
-                                              std::views::transform([this](const auto& image) {
+                                              std::views::transform([this, i](const auto& image) {
                                                   return vk::DescriptorImageInfo{
                                                       .sampler = *sampler,
-                                                      .imageView = image.image,
+                                                      .imageView = image.images.size() > i
+                                                                       ? *(image.images.begin() + i)
+                                                                       : *image.images.begin(),
                                                       .imageLayout = image.layout,
                                                   };
                                               }))
@@ -141,9 +144,11 @@ VulkanPipeline::VulkanPipeline(const VulkanDevice& device_,
                             .descriptorType = binding.type,
                             .pBufferInfo = Common::VectorFromRange(
                                                binding.buffers |
-                                               std::views::transform([](const vk::Buffer& buffer) {
+                                               std::views::transform([i](const auto& buffer) {
                                                    return vk::DescriptorBufferInfo{
-                                                       .buffer = buffer,
+                                                       .buffer = buffer.buffers.size() > i
+                                                                     ? *(buffer.buffers.begin() + i)
+                                                                     : *buffer.buffers.begin(),
                                                        .offset = 0,
                                                        .range = VK_WHOLE_SIZE,
                                                    };
@@ -238,7 +243,7 @@ void VulkanPipeline::WriteUniformObject(const u8* data, std::size_t size, std::s
     std::memcpy(**frame.uniform_buffers[idx][array_idx].buffer, data, size);
 }
 
-VulkanPipeline::FrameInFlight& VulkanPipeline::AcquireNextFrame() {
+FrameInFlight& VulkanPipeline::AcquireNextFrame() {
     current_frame = (current_frame + 1) % frames_in_flight.size();
 
     auto& frame = frames_in_flight[current_frame];

@@ -14,6 +14,7 @@
 #include "common/alignment.h"
 #include "common/common_types.h"
 #include "common/temp_ptr.h"
+#include "core/renderer/vulkan_device.h"
 
 namespace Renderer {
 class VulkanImage;
@@ -41,35 +42,31 @@ struct CommandBufferContext {
 
 /// Allocates a command buffer, begins/ends it, and submits it to a queue.
 struct OneTimeCommandContext {
-    explicit OneTimeCommandContext(const vk::raii::Device& device,
-                                   const vk::raii::CommandPool& command_pool_,
-                                   const vk::raii::Queue& queue_)
-        : command_pool(command_pool_),
-          queue(queue_), command_buffers{device,
-                                         {
-                                             .commandPool = *command_pool,
-                                             .level = vk::CommandBufferLevel::ePrimary,
-                                             .commandBufferCount = 1,
-                                         }} {
+    explicit OneTimeCommandContext(const VulkanDevice& device_)
+        : device(device_), command_buffers{*device,
+                                           {
+                                               .commandPool = *device.command_pool,
+                                               .level = vk::CommandBufferLevel::ePrimary,
+                                               .commandBufferCount = 1,
+                                           }} {
 
         command_buffers[0].begin({.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
     }
 
     ~OneTimeCommandContext() {
         command_buffers[0].end();
-        queue.submit({{
+        device.graphics_queue.submit({{
             .commandBufferCount = 1,
             .pCommandBuffers = TempArr<vk::CommandBuffer>{*command_buffers[0]},
         }});
-        queue.waitIdle();
+        device.graphics_queue.waitIdle();
     }
 
     vk::raii::CommandBuffer& operator*() {
         return command_buffers[0];
     }
 
-    const vk::raii::CommandPool& command_pool;
-    const vk::raii::Queue& queue;
+    const VulkanDevice& device;
     vk::raii::CommandBuffers command_buffers;
 };
 

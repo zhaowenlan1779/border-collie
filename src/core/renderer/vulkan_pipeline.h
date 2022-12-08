@@ -34,12 +34,15 @@ struct DescriptorBinding {
     u32 count{};
     vk::ShaderStageFlags stages{};
 
-    // Only one of the following 3 should be set. If `size` is set, `type` must be eUniformBuffer,
-    // and the buffer will be created and owned by the pipeline.
-    vk::ArrayProxy<const vk::Buffer> buffers;
+    // Only one of the following 3 should be set. If `size` is set, `type` must be
+    // eUniformBuffer, and the buffer will be created and owned by the pipeline.
+    struct BufferRef {
+        vk::ArrayProxy<const vk::Buffer> buffers;
+    };
+    vk::ArrayProxy<const BufferRef> buffers;
 
     struct ImageRef {
-        vk::ImageView image;
+        vk::ArrayProxy<const vk::ImageView> images;
         vk::ImageLayout layout;
     };
     vk::ArrayProxy<const ImageRef> images;
@@ -61,6 +64,21 @@ inline DescriptorBinding UBO(vk::ShaderStageFlags stages) {
 
 using DescriptorSet = vk::ArrayProxy<const DescriptorBinding>;
 
+struct FrameInFlight : NonCopyable {
+    u32 index = 0;
+    vk::raii::CommandBuffer command_buffer = nullptr;
+    vk::raii::Semaphore render_start_semaphore = nullptr;
+    vk::raii::Semaphore render_finished_semaphore = nullptr;
+    vk::raii::Fence in_flight_fence = nullptr;
+    std::vector<vk::raii::DescriptorSet> descriptor_sets;
+
+    struct UniformBuffer {
+        std::unique_ptr<VulkanUniformBuffer> buffer;
+        vk::PipelineStageFlags2 dst_stages{};
+    };
+    std::vector<std::vector<UniformBuffer>> uniform_buffers{};
+};
+
 /**
  * Base class for a pipeline. Handles descriptors, push constants, frames in flight, etc.
  */
@@ -80,7 +98,6 @@ public:
         }
     }
 
-    struct FrameInFlight;
     FrameInFlight& AcquireNextFrame();
     void BeginFrame();
     void EndFrame();
@@ -94,19 +111,6 @@ public:
     vk::raii::Sampler sampler = nullptr;
 
     vk::raii::CommandPool command_pool = nullptr;
-    struct FrameInFlight : NonCopyable {
-        vk::raii::CommandBuffer command_buffer = nullptr;
-        vk::raii::Semaphore render_start_semaphore = nullptr;
-        vk::raii::Semaphore render_finished_semaphore = nullptr;
-        vk::raii::Fence in_flight_fence = nullptr;
-        std::vector<vk::raii::DescriptorSet> descriptor_sets;
-
-        struct UniformBuffer {
-            std::unique_ptr<VulkanUniformBuffer> buffer;
-            vk::PipelineStageFlags2 dst_stages{};
-        };
-        std::vector<std::vector<UniformBuffer>> uniform_buffers{};
-    };
     std::array<FrameInFlight, 2> frames_in_flight;
     std::size_t current_frame = 0;
 

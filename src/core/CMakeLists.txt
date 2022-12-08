@@ -25,6 +25,8 @@ add_library(core STATIC
     renderer/vulkan_texture.h
 )
 target_shaders(core
+    renderer/shaders/postprocessing.frag
+    renderer/shaders/postprocessing.vert
     renderer/shaders/test.frag
     renderer/shaders/test.vert
 )
