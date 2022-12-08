@@ -24,7 +24,7 @@ static void OnFramebufferResized(GLFWwindow* window, int width, int height) {
     if (g_should_render) {
         auto* renderer =
             reinterpret_cast<Renderer::VulkanRenderer*>(glfwGetWindowUserPointer(window));
-        renderer->RecreateSwapchain({static_cast<u32>(width), static_cast<u32>(height)});
+        renderer->OnResized({static_cast<u32>(width), static_cast<u32>(height)});
     }
 }
 

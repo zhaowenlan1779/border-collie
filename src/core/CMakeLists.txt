@@ -15,6 +15,7 @@ add_library(core STATIC
     renderer/vulkan_pipeline.h
     renderer/vulkan_rasterizer.cpp
     renderer/vulkan_rasterizer.h
+    renderer/vulkan_renderer_core.h
     renderer/vulkan_renderer.cpp
     renderer/vulkan_renderer.h
     renderer/vulkan_shader.cpp
