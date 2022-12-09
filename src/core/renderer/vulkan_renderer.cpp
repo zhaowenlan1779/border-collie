@@ -2,7 +2,6 @@
 // Licensed under GPLv2 or any later version
 // Refer to the license.txt file included.
 
-#include <array>
 #include <spdlog/spdlog.h>
 #include "common/temp_ptr.h"
 #include "core/renderer/vulkan_allocator.h"
@@ -10,9 +9,7 @@
 #include "core/renderer/vulkan_device.h"
 #include "core/renderer/vulkan_graphics_pipeline.h"
 #include "core/renderer/vulkan_helpers.hpp"
-#include "core/renderer/vulkan_rasterizer.h"
 #include "core/renderer/vulkan_renderer.h"
-#include "core/renderer/vulkan_renderer_core.h"
 #include "core/renderer/vulkan_shader.h"
 #include "core/renderer/vulkan_swapchain.h"
 #include "core/renderer/vulkan_texture.h"
@@ -39,26 +36,11 @@ const vk::raii::Instance& VulkanRenderer::GetVulkanInstance() const {
 }
 
 void VulkanRenderer::Init(vk::SurfaceKHR surface, const vk::Extent2D& actual_extent) {
-    device = std::make_unique<VulkanDevice>(
-        context->instance, surface,
-        std::array{
-            VK_KHR_SWAPCHAIN_EXTENSION_NAME,
-        },
-        Helpers::GenericStructureChain{vk::PhysicalDeviceFeatures2{
-                                           .features =
-                                               {
-                                                   .samplerAnisotropy = VK_TRUE,
-                                               },
-                                       },
-                                       vk::PhysicalDeviceVulkan13Features{
-                                           .pipelineCreationCacheControl = VK_TRUE,
-                                           .synchronization2 = VK_TRUE,
-                                       }});
+    device = CreateDevice(surface, actual_extent);
 
     swap_chain = std::make_unique<VulkanSwapchain>(*device, actual_extent);
-    CreateRenderTargets();
 
-    core = std::make_unique<VulkanRasterizer>(*this);
+    CreateRenderTargets();
 
     // Pipeline
     // clang-format off
@@ -240,7 +222,7 @@ void VulkanRenderer::PostprocessAndPresent(const FrameInFlight& offscreen_frame)
 void VulkanRenderer::DrawFrame() {
     device->allocator->CleanupStagingBuffers();
 
-    const auto& offscreen_frame = core->DrawFrame();
+    const auto& offscreen_frame = DrawFrameOffscreen();
     PostprocessAndPresent(offscreen_frame);
 }
 
@@ -265,8 +247,6 @@ void VulkanRenderer::OnResized(const vk::Extent2D& actual_extent) {
                                           .layout = vk::ImageLayout::eGeneral,
                                       }},
                                   });
-
-    core->OnResized(actual_extent);
 }
 
 } // namespace Renderer

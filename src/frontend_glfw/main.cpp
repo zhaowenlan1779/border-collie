@@ -14,7 +14,7 @@
 #include "common/common_types.h"
 #include "common/log.h"
 #include "common/scope_exit.h"
-#include "core/renderer/vulkan_renderer.h"
+#include "core/renderer/vulkan_rasterizer.h"
 
 bool g_should_render = true;
 
@@ -45,9 +45,9 @@ int main() {
     std::vector<const char*> extensions{extensions_raw, extensions_raw + extension_count};
 
 #ifdef NDEBUG
-    Renderer::VulkanRenderer renderer{false, std::move(extensions)};
+    Renderer::VulkanRasterizer renderer{false, std::move(extensions)};
 #else
-    Renderer::VulkanRenderer renderer{true, std::move(extensions)};
+    Renderer::VulkanRasterizer renderer{true, std::move(extensions)};
 #endif
 
     VkSurfaceKHR surface;

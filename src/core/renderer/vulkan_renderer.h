@@ -4,10 +4,10 @@
 
 #pragma once
 
+#include <array>
 #include <memory>
 #include <utility>
 #include <vector>
-#include <glm/glm.hpp>
 #include <vulkan/vulkan_raii.hpp>
 #include "common/common_types.h"
 
@@ -17,7 +17,6 @@ class VulkanContext;
 class VulkanDevice;
 class VulkanImage;
 class VulkanGraphicsPipeline;
-class VulkanRendererCore;
 class VulkanSwapchain;
 struct FrameInFlight;
 
@@ -25,11 +24,11 @@ struct FrameInFlight;
  * Base class for Vulkan based renderers.
  * Contains common code for swapchain management, postprocessing, etc.
  */
-class VulkanRenderer {
+class VulkanRenderer : NonCopyable {
 public:
     explicit VulkanRenderer(bool enable_validation_layers,
                             std::vector<const char*> frontend_required_extensions);
-    ~VulkanRenderer();
+    virtual ~VulkanRenderer() = 0;
 
     //// Public interface
     vk::raii::Instance& GetVulkanInstance();
@@ -37,12 +36,18 @@ public:
 
     virtual void Init(vk::SurfaceKHR surface, const vk::Extent2D& actual_extent);
     void DrawFrame();
-    void OnResized(const vk::Extent2D& actual_extent);
+    virtual void OnResized(const vk::Extent2D& actual_extent);
+
+protected:
+    virtual std::unique_ptr<VulkanDevice> CreateDevice(vk::SurfaceKHR surface,
+                                                       const vk::Extent2D& actual_extent) const = 0;
+    virtual const FrameInFlight& DrawFrameOffscreen() = 0;
+    void CreateRenderTargets();
+    void PostprocessAndPresent(const FrameInFlight& offscreen_frame);
 
     std::unique_ptr<VulkanContext> context;
     std::unique_ptr<VulkanDevice> device;
     std::unique_ptr<VulkanSwapchain> swap_chain;
-    std::unique_ptr<VulkanRendererCore> core;
 
     struct OffscreenFrame {
         std::unique_ptr<VulkanImage> image;
@@ -51,10 +56,6 @@ public:
     std::array<OffscreenFrame, 2> offscreen_frames;
     std::size_t current_frame = 0;
     std::unique_ptr<VulkanGraphicsPipeline> pp_pipeline;
-
-private:
-    void CreateRenderTargets();
-    void PostprocessAndPresent(const FrameInFlight& offscreen_frame);
 };
 
 } // namespace Renderer

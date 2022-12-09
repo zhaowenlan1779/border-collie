@@ -4,35 +4,40 @@
 
 #pragma once
 
+#include <array>
 #include <memory>
 #include <utility>
+#include <vector>
 #include <glm/glm.hpp>
 #include <vulkan/vulkan_raii.hpp>
-#include "core/renderer/vulkan_renderer_core.h"
+#include "core/renderer/vulkan_renderer.h"
 
 namespace Renderer {
 
 class VulkanGraphicsPipeline;
 class VulkanImmUploadBuffer;
-class VulkanRenderer;
 class VulkanTexture;
 
-class VulkanRasterizer : public VulkanRendererCore {
+class VulkanRasterizer : public VulkanRenderer {
 public:
-    explicit VulkanRasterizer(const VulkanRenderer& renderer);
+    explicit VulkanRasterizer(bool enable_validation_layers,
+                              std::vector<const char*> frontend_required_extensions);
     ~VulkanRasterizer() override;
 
+    void Init(vk::SurfaceKHR surface, const vk::Extent2D& actual_extent) override;
     void OnResized(const vk::Extent2D& actual_extent) override;
-    const FrameInFlight& DrawFrame() override;
 
 private:
+    std::unique_ptr<VulkanDevice> CreateDevice(vk::SurfaceKHR surface,
+                                               const vk::Extent2D& actual_extent) const override;
+    const FrameInFlight& DrawFrameOffscreen() override;
+
     struct UniformBufferObject;
     UniformBufferObject GetUniformBufferObject() const;
     glm::mat4 GetPushConstant() const;
 
     void CreateFramebuffers();
 
-    const VulkanRenderer& renderer;
     std::unique_ptr<VulkanImmUploadBuffer> vertex_buffer{};
     std::unique_ptr<VulkanImmUploadBuffer> index_buffer{};
     std::unique_ptr<VulkanTexture> texture{};

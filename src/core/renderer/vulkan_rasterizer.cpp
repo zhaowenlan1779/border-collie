@@ -5,15 +5,42 @@
 #include <chrono>
 #include <glm/gtc/matrix_transform.hpp>
 #include "core/renderer/vulkan_buffer.h"
+#include "core/renderer/vulkan_context.h"
 #include "core/renderer/vulkan_graphics_pipeline.h"
 #include "core/renderer/vulkan_helpers.hpp"
 #include "core/renderer/vulkan_rasterizer.h"
-#include "core/renderer/vulkan_renderer.h"
 #include "core/renderer/vulkan_shader.h"
 #include "core/renderer/vulkan_swapchain.h"
 #include "core/renderer/vulkan_texture.h"
 
 namespace Renderer {
+
+VulkanRasterizer::VulkanRasterizer(bool enable_validation_layers,
+                                   std::vector<const char*> frontend_required_extensions)
+    : VulkanRenderer(enable_validation_layers, frontend_required_extensions) {}
+
+VulkanRasterizer::~VulkanRasterizer() {
+    (*device)->waitIdle();
+}
+
+std::unique_ptr<VulkanDevice> VulkanRasterizer::CreateDevice(
+    vk::SurfaceKHR surface, [[maybe_unused]] const vk::Extent2D& actual_extent) const {
+    return std::make_unique<VulkanDevice>(
+        context->instance, surface,
+        std::array{
+            VK_KHR_SWAPCHAIN_EXTENSION_NAME,
+        },
+        Helpers::GenericStructureChain{vk::PhysicalDeviceFeatures2{
+                                           .features =
+                                               {
+                                                   .samplerAnisotropy = VK_TRUE,
+                                               },
+                                       },
+                                       vk::PhysicalDeviceVulkan13Features{
+                                           .pipelineCreationCacheControl = VK_TRUE,
+                                           .synchronization2 = VK_TRUE,
+                                       }});
+}
 
 struct Vertex {
     glm::vec2 pos;
@@ -21,42 +48,44 @@ struct Vertex {
     glm::vec2 texCoord;
 };
 
-VulkanRasterizer::VulkanRasterizer(const VulkanRenderer& renderer_) : renderer(renderer_) {
+void VulkanRasterizer::Init(vk::SurfaceKHR surface, const vk::Extent2D& actual_extent) {
+    VulkanRenderer::Init(surface, actual_extent);
+
     // Buffers & Textures
     const std::vector<Vertex> vertices = {{{-0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}, {1.0f, 0.0f}},
                                           {{0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f}},
                                           {{0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}, {0.0f, 1.0f}},
                                           {{-0.5f, 0.5f}, {1.0f, 1.0f, 1.0f}, {1.0f, 1.0f}}};
     vertex_buffer = std::make_unique<VulkanImmUploadBuffer>(
-        *renderer.device, VulkanImmUploadBufferCreateInfo{
-                              .data = reinterpret_cast<const u8*>(vertices.data()),
-                              .size = vertices.size() * sizeof(vertices[0]),
-                              .usage = vk::BufferUsageFlagBits::eVertexBuffer,
-                              .dst_stage_mask = vk::PipelineStageFlagBits2::eVertexAttributeInput,
-                              .dst_access_mask = vk::AccessFlagBits2::eVertexAttributeRead,
-                          });
+        *device, VulkanImmUploadBufferCreateInfo{
+                     .data = reinterpret_cast<const u8*>(vertices.data()),
+                     .size = vertices.size() * sizeof(vertices[0]),
+                     .usage = vk::BufferUsageFlagBits::eVertexBuffer,
+                     .dst_stage_mask = vk::PipelineStageFlagBits2::eVertexAttributeInput,
+                     .dst_access_mask = vk::AccessFlagBits2::eVertexAttributeRead,
+                 });
 
     const std::vector<u16> indices = {0, 1, 2, 2, 3, 0};
     index_buffer = std::make_unique<VulkanImmUploadBuffer>(
-        *renderer.device, VulkanImmUploadBufferCreateInfo{
-                              .data = reinterpret_cast<const u8*>(indices.data()),
-                              .size = indices.size() * sizeof(indices[0]),
-                              .usage = vk::BufferUsageFlagBits::eIndexBuffer,
-                              .dst_stage_mask = vk::PipelineStageFlagBits2::eIndexInput,
-                              .dst_access_mask = vk::AccessFlagBits2::eIndexRead,
-                          });
+        *device, VulkanImmUploadBufferCreateInfo{
+                     .data = reinterpret_cast<const u8*>(indices.data()),
+                     .size = indices.size() * sizeof(indices[0]),
+                     .usage = vk::BufferUsageFlagBits::eIndexBuffer,
+                     .dst_stage_mask = vk::PipelineStageFlagBits2::eIndexInput,
+                     .dst_access_mask = vk::AccessFlagBits2::eIndexRead,
+                 });
 
-    texture = std::make_unique<VulkanTexture>(*renderer.device, u8"textures/texture.jpg");
+    texture = std::make_unique<VulkanTexture>(*device, u8"textures/texture.jpg");
 
     // Pipeline
     static constexpr auto VertexAttributeDescriptions = Helpers::AttributeDescriptionsFor<Vertex>();
 
     // clang-format off
-    pipeline = std::make_unique<VulkanGraphicsPipeline>(*renderer.device, VulkanGraphicsPipelineCreateInfo{
+    pipeline = std::make_unique<VulkanGraphicsPipeline>(*device, VulkanGraphicsPipelineCreateInfo{
         .render_pass_info = {
             .attachmentCount = 1,
             .pAttachments = TempArr<vk::AttachmentDescription>{{
-                .format = renderer.swap_chain->surface_format.format,
+                .format = swap_chain->surface_format.format,
                 .loadOp = vk::AttachmentLoadOp::eClear,
                 .storeOp = vk::AttachmentStoreOp::eStore,
                 .stencilLoadOp = vk::AttachmentLoadOp::eDontCare,
@@ -87,12 +116,12 @@ VulkanRasterizer::VulkanRasterizer(const VulkanRenderer& renderer_) : renderer(r
             .pStages = TempArr<vk::PipelineShaderStageCreateInfo>{{
                 {
                     .stage = vk::ShaderStageFlagBits::eVertex,
-                    .module = *VulkanShader{**renderer.device, u8"core/renderer/shaders/test.vert"},
+                    .module = *VulkanShader{**device, u8"core/renderer/shaders/test.vert"},
                     .pName = "main",
                 },
                 {
                     .stage = vk::ShaderStageFlagBits::eFragment,
-                    .module = *VulkanShader{**renderer.device, u8"core/renderer/shaders/test.frag"},
+                    .module = *VulkanShader{**device, u8"core/renderer/shaders/test.frag"},
                     .pName = "main",
                 },
             }},
@@ -135,8 +164,6 @@ VulkanRasterizer::VulkanRasterizer(const VulkanRenderer& renderer_) : renderer(r
     CreateFramebuffers();
 }
 
-VulkanRasterizer::~VulkanRasterizer() = default;
-
 struct VulkanRasterizer::UniformBufferObject {
     glm::mat4 model;
     glm::mat4 view;
@@ -150,10 +177,9 @@ VulkanRasterizer::UniformBufferObject VulkanRasterizer::GetUniformBufferObject()
     const float time =
         std::chrono::duration<float, std::chrono::seconds::period>(currentTime - startTime).count();
 
-    auto proj = glm::perspective(glm::radians(45.0f),
-                                 renderer.swap_chain->extent.width /
-                                     static_cast<float>(renderer.swap_chain->extent.height),
-                                 0.1f, 10.0f);
+    auto proj = glm::perspective(
+        glm::radians(45.0f),
+        swap_chain->extent.width / static_cast<float>(swap_chain->extent.height), 0.1f, 10.0f);
     proj[1][1] *= -1;
     return {
         .model =
@@ -171,10 +197,9 @@ glm::mat4 VulkanRasterizer::GetPushConstant() const {
     const float time =
         std::chrono::duration<float, std::chrono::seconds::period>(currentTime - startTime).count();
 
-    auto proj = glm::perspective(glm::radians(45.0f),
-                                 renderer.swap_chain->extent.width /
-                                     static_cast<float>(renderer.swap_chain->extent.height),
-                                 0.1f, 10.0f);
+    auto proj = glm::perspective(
+        glm::radians(45.0f),
+        swap_chain->extent.width / static_cast<float>(swap_chain->extent.height), 0.1f, 10.0f);
     proj[1][1] *= -1;
 
     return proj *
@@ -183,7 +208,7 @@ glm::mat4 VulkanRasterizer::GetPushConstant() const {
            glm::rotate(glm::mat4(1.0f), time * glm::radians(90.0f), glm::vec3(0.0f, 0.0f, 1.0f));
 }
 
-const FrameInFlight& VulkanRasterizer::DrawFrame() {
+const FrameInFlight& VulkanRasterizer::DrawFrameOffscreen() {
     const auto& frame = pipeline->AcquireNextFrame();
     pipeline->WriteUniformObject<UniformBufferObject>({GetUniformBufferObject()});
 
@@ -191,7 +216,7 @@ const FrameInFlight& VulkanRasterizer::DrawFrame() {
         .framebuffer = *framebuffers[frame.index],
         .renderArea =
             {
-                .extent = renderer.swap_chain->extent,
+                .extent = swap_chain->extent,
             },
     });
     frame.command_buffer.pushConstants<glm::mat4>(
@@ -199,7 +224,7 @@ const FrameInFlight& VulkanRasterizer::DrawFrame() {
     frame.command_buffer.drawIndexed(6, 1, 0, 0, 0);
     pipeline->EndFrame();
 
-    renderer.device->graphics_queue.submit(
+    device->graphics_queue.submit(
         {
             {
                 .commandBufferCount = 1,
@@ -215,19 +240,19 @@ const FrameInFlight& VulkanRasterizer::DrawFrame() {
 void VulkanRasterizer::CreateFramebuffers() {
     for (std::size_t i = 0; i < framebuffers.size(); ++i) {
         framebuffers[i] = vk::raii::Framebuffer{
-            **renderer.device,
-            vk::FramebufferCreateInfo{
-                .renderPass = *pipeline->render_pass,
-                .attachmentCount = 1,
-                .pAttachments = TempArr<vk::ImageView>{*renderer.offscreen_frames[i].image_view},
-                .width = renderer.swap_chain->extent.width,
-                .height = renderer.swap_chain->extent.height,
-                .layers = 1,
-            }};
+            **device, vk::FramebufferCreateInfo{
+                          .renderPass = *pipeline->render_pass,
+                          .attachmentCount = 1,
+                          .pAttachments = TempArr<vk::ImageView>{*offscreen_frames[i].image_view},
+                          .width = swap_chain->extent.width,
+                          .height = swap_chain->extent.height,
+                          .layers = 1,
+                      }};
     }
 }
 
 void VulkanRasterizer::OnResized([[maybe_unused]] const vk::Extent2D& actual_extent) {
+    VulkanRenderer::OnResized(actual_extent);
     CreateFramebuffers();
 }
 
