@@ -2,8 +2,8 @@
 // Licensed under GPLv2 or any later version
 // Refer to the license.txt file included.
 
-#include "core/renderer/vulkan_helpers.hpp"
-#include "core/renderer/vulkan_texture.h"
+#include "core/vulkan/vulkan_helpers.hpp"
+#include "core/vulkan/vulkan_texture.h"
 
 namespace Renderer::Helpers {
 

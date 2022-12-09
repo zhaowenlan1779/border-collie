@@ -10,10 +10,10 @@
 #include <stb_image_resize.h>
 #include <stb_image_write.h>
 #include "common/file_util.h"
-#include "core/renderer/vulkan_allocator.h"
-#include "core/renderer/vulkan_buffer.h"
-#include "core/renderer/vulkan_device.h"
-#include "core/renderer/vulkan_texture.h"
+#include "core/vulkan/vulkan_allocator.h"
+#include "core/vulkan/vulkan_buffer.h"
+#include "core/vulkan/vulkan_device.h"
+#include "core/vulkan/vulkan_texture.h"
 
 namespace Renderer {
 

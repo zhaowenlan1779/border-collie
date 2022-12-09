@@ -3,7 +3,7 @@
 // Refer to the license.txt file included.
 
 #include "common/file_util.h"
-#include "core/renderer/vulkan_shader.h"
+#include "core/vulkan/vulkan_shader.h"
 
 namespace Renderer {
 

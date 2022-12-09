@@ -4,10 +4,10 @@
 
 #include <spdlog/spdlog.h>
 #include "common/temp_ptr.h"
-#include "core/renderer/vulkan_allocator.h"
-#include "core/renderer/vulkan_buffer.h"
-#include "core/renderer/vulkan_device.h"
-#include "core/renderer/vulkan_helpers.hpp"
+#include "core/vulkan/vulkan_allocator.h"
+#include "core/vulkan/vulkan_buffer.h"
+#include "core/vulkan/vulkan_device.h"
+#include "core/vulkan/vulkan_helpers.hpp"
 
 namespace Renderer {
 

@@ -10,7 +10,7 @@
 #include <vector>
 #include <vulkan/vulkan_raii.hpp>
 #include "common/common_types.h"
-#include "core/renderer/vulkan_helpers.hpp"
+#include "core/vulkan/vulkan_helpers.hpp"
 
 namespace Renderer {
 

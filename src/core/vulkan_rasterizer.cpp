@@ -4,20 +4,20 @@
 
 #include <chrono>
 #include <glm/gtc/matrix_transform.hpp>
-#include "core/renderer/vulkan_buffer.h"
-#include "core/renderer/vulkan_context.h"
-#include "core/renderer/vulkan_graphics_pipeline.h"
-#include "core/renderer/vulkan_helpers.hpp"
-#include "core/renderer/vulkan_rasterizer.h"
-#include "core/renderer/vulkan_shader.h"
-#include "core/renderer/vulkan_swapchain.h"
-#include "core/renderer/vulkan_texture.h"
+#include "core/vulkan/vulkan_buffer.h"
+#include "core/vulkan/vulkan_context.h"
+#include "core/vulkan/vulkan_graphics_pipeline.h"
+#include "core/vulkan/vulkan_helpers.hpp"
+#include "core/vulkan/vulkan_shader.h"
+#include "core/vulkan/vulkan_swapchain.h"
+#include "core/vulkan/vulkan_texture.h"
+#include "core/vulkan_rasterizer.h"
 
 namespace Renderer {
 
 VulkanRasterizer::VulkanRasterizer(bool enable_validation_layers,
                                    std::vector<const char*> frontend_required_extensions)
-    : VulkanRenderer(enable_validation_layers, frontend_required_extensions) {}
+    : VulkanRenderer(enable_validation_layers, std::move(frontend_required_extensions)) {}
 
 VulkanRasterizer::~VulkanRasterizer() {
     (*device)->waitIdle();
@@ -116,12 +116,12 @@ void VulkanRasterizer::Init(vk::SurfaceKHR surface, const vk::Extent2D& actual_e
             .pStages = TempArr<vk::PipelineShaderStageCreateInfo>{{
                 {
                     .stage = vk::ShaderStageFlagBits::eVertex,
-                    .module = *VulkanShader{**device, u8"core/renderer/shaders/test.vert"},
+                    .module = *VulkanShader{**device, u8"core/shaders/test.vert"},
                     .pName = "main",
                 },
                 {
                     .stage = vk::ShaderStageFlagBits::eFragment,
-                    .module = *VulkanShader{**device, u8"core/renderer/shaders/test.frag"},
+                    .module = *VulkanShader{**device, u8"core/shaders/test.frag"},
                     .pName = "main",
                 },
             }},

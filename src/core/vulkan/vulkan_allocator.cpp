@@ -8,8 +8,8 @@
 #include <spdlog/spdlog.h>
 #include "common/ranges.h"
 #include "common/temp_ptr.h"
-#include "core/renderer/vulkan_allocator.h"
-#include "core/renderer/vulkan_buffer.h"
+#include "core/vulkan/vulkan_allocator.h"
+#include "core/vulkan/vulkan_buffer.h"
 
 namespace Renderer {
 

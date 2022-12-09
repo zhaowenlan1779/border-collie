@@ -14,7 +14,7 @@
 #include "common/common_types.h"
 #include "common/log.h"
 #include "common/scope_exit.h"
-#include "core/renderer/vulkan_rasterizer.h"
+#include "core/vulkan_rasterizer.h"
 
 bool g_should_render = true;
 

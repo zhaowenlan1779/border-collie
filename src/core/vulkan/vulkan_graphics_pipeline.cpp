@@ -5,8 +5,8 @@
 #include <map>
 #include "common/ranges.h"
 #include "common/temp_ptr.h"
-#include "core/renderer/vulkan_device.h"
-#include "core/renderer/vulkan_graphics_pipeline.h"
+#include "core/vulkan/vulkan_device.h"
+#include "core/vulkan/vulkan_graphics_pipeline.h"
 
 namespace Renderer {
 

@@ -6,7 +6,7 @@
 
 #include <vector>
 #include <vulkan/vulkan_raii.hpp>
-#include "core/renderer/vulkan_pipeline.h"
+#include "core/vulkan/vulkan_pipeline.h"
 
 namespace Renderer {
 

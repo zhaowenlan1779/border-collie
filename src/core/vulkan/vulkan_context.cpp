@@ -4,7 +4,7 @@
 
 #include <spdlog/spdlog.h>
 #include "common/temp_ptr.h"
-#include "core/renderer/vulkan_context.h"
+#include "core/vulkan/vulkan_context.h"
 
 namespace Renderer {
 

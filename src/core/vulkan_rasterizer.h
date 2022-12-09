@@ -10,7 +10,7 @@
 #include <vector>
 #include <glm/glm.hpp>
 #include <vulkan/vulkan_raii.hpp>
-#include "core/renderer/vulkan_renderer.h"
+#include "core/vulkan_renderer.h"
 
 namespace Renderer {
 

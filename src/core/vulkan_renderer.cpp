@@ -4,15 +4,15 @@
 
 #include <spdlog/spdlog.h>
 #include "common/temp_ptr.h"
-#include "core/renderer/vulkan_allocator.h"
-#include "core/renderer/vulkan_context.h"
-#include "core/renderer/vulkan_device.h"
-#include "core/renderer/vulkan_graphics_pipeline.h"
-#include "core/renderer/vulkan_helpers.hpp"
-#include "core/renderer/vulkan_renderer.h"
-#include "core/renderer/vulkan_shader.h"
-#include "core/renderer/vulkan_swapchain.h"
-#include "core/renderer/vulkan_texture.h"
+#include "core/vulkan/vulkan_allocator.h"
+#include "core/vulkan/vulkan_context.h"
+#include "core/vulkan/vulkan_device.h"
+#include "core/vulkan/vulkan_graphics_pipeline.h"
+#include "core/vulkan/vulkan_helpers.hpp"
+#include "core/vulkan/vulkan_shader.h"
+#include "core/vulkan/vulkan_swapchain.h"
+#include "core/vulkan/vulkan_texture.h"
+#include "core/vulkan_renderer.h"
 
 namespace Renderer {
 
@@ -79,12 +79,12 @@ void VulkanRenderer::Init(vk::SurfaceKHR surface, const vk::Extent2D& actual_ext
             .pStages = TempArr<vk::PipelineShaderStageCreateInfo>{{
                 {
                     .stage = vk::ShaderStageFlagBits::eVertex,
-                    .module = *VulkanShader{**device, u8"core/renderer/shaders/postprocessing.vert"},
+                    .module = *VulkanShader{**device, u8"core/shaders/postprocessing.vert"},
                     .pName = "main",
                 },
                 {
                     .stage = vk::ShaderStageFlagBits::eFragment,
-                    .module = *VulkanShader{**device, u8"core/renderer/shaders/postprocessing.frag"},
+                    .module = *VulkanShader{**device, u8"core/shaders/postprocessing.frag"},
                     .pName = "main",
                 },
             }},

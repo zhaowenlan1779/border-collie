@@ -5,8 +5,8 @@
 #include <limits>
 #include <spdlog/spdlog.h>
 #include "common/temp_ptr.h"
-#include "core/renderer/vulkan_device.h"
-#include "core/renderer/vulkan_swapchain.h"
+#include "core/vulkan/vulkan_device.h"
+#include "core/vulkan/vulkan_swapchain.h"
 
 namespace Renderer {
 
