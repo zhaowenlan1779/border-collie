@@ -14,7 +14,7 @@ namespace Renderer {
 VulkanBuffer::VulkanBuffer(const VulkanAllocator& allocator_,
                            const vk::BufferCreateInfo& buffer_create_info,
                            const VmaAllocationCreateInfo& alloc_create_info)
-    : allocator(*allocator_) {
+    : allocator(*allocator_), size(buffer_create_info.size) {
 
     const VkBufferCreateInfo& buffer_create_info_raw = buffer_create_info;
     const auto result = vmaCreateBuffer(allocator, &buffer_create_info_raw, &alloc_create_info,
@@ -24,17 +24,11 @@ VulkanBuffer::VulkanBuffer(const VulkanAllocator& allocator_,
     }
 }
 
-VkBuffer VulkanBuffer::operator*() const {
-    return buffer;
-}
-
 VulkanBuffer::~VulkanBuffer() {
     vmaDestroyBuffer(allocator, buffer, allocation);
 }
 
-VulkanStagingBuffer::VulkanStagingBuffer(const VulkanAllocator& allocator,
-                                         const vk::raii::CommandPool& command_pool,
-                                         std::size_t size)
+VulkanStagingBuffer::VulkanStagingBuffer(const VulkanAllocator& allocator, std::size_t size)
     : VulkanBuffer{allocator,
                    {
                        .size = size,
@@ -46,9 +40,9 @@ VulkanStagingBuffer::VulkanStagingBuffer(const VulkanAllocator& allocator,
                        .usage = VMA_MEMORY_USAGE_AUTO,
                    }} {
 
-    vk::raii::CommandBuffers command_buffers{allocator.device,
+    vk::raii::CommandBuffers command_buffers{*allocator.device,
                                              {
-                                                 .commandPool = *command_pool,
+                                                 .commandPool = *allocator.device.command_pool,
                                                  .level = vk::CommandBufferLevel::ePrimary,
                                                  .commandBufferCount = 1,
                                              }};
@@ -68,16 +62,16 @@ VulkanImmUploadBuffer::VulkanImmUploadBuffer(VulkanDevice& device,
                        .usage = VMA_MEMORY_USAGE_AUTO,
                    }} {
 
-    auto handle = device.allocator->CreateStagingBuffer(device.command_pool, create_info.size);
+    auto handle = device.allocator->CreateStagingBuffer(size);
     const auto& src_buffer = *handle;
 
-    std::memcpy(src_buffer.allocation_info.pMappedData, create_info.data, create_info.size);
+    std::memcpy(src_buffer.allocation_info.pMappedData, create_info.data, size);
     vmaFlushAllocation(**device.allocator, src_buffer.allocation, 0, VK_WHOLE_SIZE);
 
     // Upload
     src_buffer.command_buffer.copyBuffer(*src_buffer, buffer,
                                          {{
-                                             .size = allocation_info.size,
+                                             .size = size,
                                          }});
     src_buffer.command_buffer.pipelineBarrier2({
         .bufferMemoryBarrierCount = 1,
@@ -90,10 +84,10 @@ VulkanImmUploadBuffer::VulkanImmUploadBuffer(VulkanDevice& device,
             .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
             .buffer = buffer,
             .offset = 0,
-            .size = allocation_info.size,
+            .size = size,
         }},
     });
-    handle.Submit(device.graphics_queue);
+    handle.Submit();
 }
 
 VulkanImmUploadBuffer::~VulkanImmUploadBuffer() = default;
@@ -133,7 +127,7 @@ VulkanUniformBuffer::VulkanUniformBuffer(const VulkanAllocator& allocator_, std:
 
 VulkanUniformBuffer::~VulkanUniformBuffer() = default;
 
-void* VulkanUniformBuffer::operator*() const {
+void* VulkanUniformBuffer::operator*() const noexcept {
     if (src_buffer) {
         return src_buffer->allocation_info.pMappedData;
     } else {
@@ -153,7 +147,7 @@ void VulkanUniformBuffer::Upload(const vk::raii::CommandBuffer& command_buffer,
 
     command_buffer.copyBuffer(**src_buffer, *dst_buffer,
                               {{
-                                  .size = dst_buffer.allocation_info.size,
+                                  .size = dst_buffer.size,
                               }});
     command_buffer.pipelineBarrier2({
         .bufferMemoryBarrierCount = 1,
@@ -166,7 +160,7 @@ void VulkanUniformBuffer::Upload(const vk::raii::CommandBuffer& command_buffer,
             .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
             .buffer = *dst_buffer,
             .offset = 0,
-            .size = dst_buffer.allocation_info.size,
+            .size = dst_buffer.size,
         }},
     });
 }

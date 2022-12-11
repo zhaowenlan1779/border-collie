@@ -30,10 +30,6 @@ VulkanImage::VulkanImage(const VulkanAllocator& allocator_,
     }
 }
 
-VkImage VulkanImage::operator*() const {
-    return image;
-}
-
 VulkanImage::~VulkanImage() {
     vmaDestroyImage(allocator, image, allocation);
 }
@@ -177,7 +173,7 @@ VulkanTexture::VulkanTexture(VulkanDevice& device, const std::filesystem::path& 
         }
 
         // Upload mipmap
-        auto handle = device.allocator->CreateStagingBuffer(device.command_pool, image_data->size);
+        auto handle = device.allocator->CreateStagingBuffer(image_data->size);
         const auto& buffer = *handle;
 
         std::memcpy(buffer.allocation_info.pMappedData, image_data->pixels, image_data->size);
@@ -230,7 +226,7 @@ VulkanTexture::VulkanTexture(VulkanDevice& device, const std::filesystem::path& 
                     },
             });
 
-        handle.Submit(device.graphics_queue);
+        handle.Submit();
 
         // In case the image is not square keep at 1
         if (mip_width > 1)

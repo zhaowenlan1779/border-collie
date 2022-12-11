@@ -164,7 +164,7 @@ void VulkanPipeline::WriteUniformObject(const u8* data, std::size_t size, std::s
     const auto& frame = frames_in_flight[current_frame];
 
     assert(idx < frame.uniform_buffers.size() && array_idx < frame.uniform_buffers[idx].size());
-    assert(frame.uniform_buffers[idx][array_idx].buffer->dst_buffer.allocation_info.size == size);
+    assert(frame.uniform_buffers[idx][array_idx].buffer->dst_buffer.size == size);
     std::memcpy(**frame.uniform_buffers[idx][array_idx].buffer, data, size);
 }
 
@@ -246,9 +246,24 @@ void VulkanPipeline::UpdateDescriptor(u32 set_idx, u32 binding_idx,
                             .data(),
                 }},
                 {});
+        } else if (!binding.accel_structures.empty()) { // Accel structures
+            device->updateDescriptorSets(
+                {Helpers::GenericStructureChain{
+                    vk::WriteDescriptorSet{
+                        .dstSet = *frame.descriptor_sets[set_idx],
+                        .dstBinding = binding_idx,
+                        .descriptorCount = static_cast<u32>(binding.accel_structures.size()),
+                        .descriptorType = binding.type,
+                    },
+                    vk::WriteDescriptorSetAccelerationStructureKHR{
+                        .accelerationStructureCount =
+                            static_cast<u32>(binding.accel_structures.size()),
+                        .pAccelerationStructures = binding.accel_structures.data(),
+                    },
+                }},
+                {});
         } else if (create && binding.type == vk::DescriptorType::eUniformBuffer &&
                    binding.size != 0) { // Create
-
             frame.uniform_buffers.emplace_back();
             for (u32 i = 0; i < binding.count; ++i) {
                 frame.uniform_buffers.back().emplace_back(FrameInFlight::UniformBuffer{

@@ -118,39 +118,37 @@ void VulkanRenderer::Init(vk::SurfaceKHR surface, const vk::Extent2D& actual_ext
 void VulkanRenderer::CreateRenderTargets() {
     Helpers::OneTimeCommandContext context{*device};
 
+    const auto& info = GetOffscreenImageInfo();
     for (auto& frame : offscreen_frames) {
-        frame.image =
-            std::make_unique<VulkanImage>(*device->allocator,
-                                          vk::ImageCreateInfo{
-                                              .imageType = vk::ImageType::e2D,
-                                              .format = swap_chain->surface_format.format,
-                                              .extent =
-                                                  {
-                                                      .width = swap_chain->extent.width,
-                                                      .height = swap_chain->extent.height,
-                                                      .depth = 1,
-                                                  },
-                                              .mipLevels = 1,
-                                              .arrayLayers = 1,
-                                              .usage = vk::ImageUsageFlagBits::eColorAttachment |
-                                                       vk::ImageUsageFlagBits::eSampled,
-                                              .initialLayout = vk::ImageLayout::eUndefined,
-                                          },
-                                          VmaAllocationCreateInfo{
-                                              .flags = VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT,
-                                              .usage = VMA_MEMORY_USAGE_AUTO,
-                                              .priority = 1.0f,
-                                          });
+        frame.image = std::make_unique<VulkanImage>(
+            *device->allocator,
+            vk::ImageCreateInfo{
+                .imageType = vk::ImageType::e2D,
+                .format = info.format,
+                .extent =
+                    {
+                        .width = swap_chain->extent.width,
+                        .height = swap_chain->extent.height,
+                        .depth = 1,
+                    },
+                .mipLevels = 1,
+                .arrayLayers = 1,
+                .usage = info.usage | vk::ImageUsageFlagBits::eSampled,
+                .initialLayout = vk::ImageLayout::eUndefined,
+            },
+            VmaAllocationCreateInfo{
+                .flags = VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT,
+                .usage = VMA_MEMORY_USAGE_AUTO,
+                .priority = 1.0f,
+            });
 
         Helpers::ImageLayoutTransition(
             *context, frame.image,
             {
                 .srcStageMask = vk::PipelineStageFlagBits2::eTopOfPipe,
                 .srcAccessMask = vk::AccessFlags2{},
-                .dstStageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput |
-                                vk::PipelineStageFlagBits2::eFragmentShader,
-                .dstAccessMask =
-                    vk::AccessFlagBits2::eColorAttachmentWrite | vk::AccessFlagBits2::eUniformRead,
+                .dstStageMask = info.dst_stage_mask | vk::PipelineStageFlagBits2::eFragmentShader,
+                .dstAccessMask = info.dst_access_mask | vk::AccessFlagBits2::eUniformRead,
                 .oldLayout = vk::ImageLayout::eUndefined,
                 .newLayout = vk::ImageLayout::eGeneral,
                 .subresourceRange =
@@ -165,7 +163,7 @@ void VulkanRenderer::CreateRenderTargets() {
                                 {
                                     .image = **frame.image,
                                     .viewType = vk::ImageViewType::e2D,
-                                    .format = swap_chain->surface_format.format,
+                                    .format = info.format,
                                     .subresourceRange =
                                         {
                                             .aspectMask = vk::ImageAspectFlagBits::eColor,

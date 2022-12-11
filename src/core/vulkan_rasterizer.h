@@ -28,6 +28,7 @@ public:
     void OnResized(const vk::Extent2D& actual_extent) override;
 
 private:
+    OffscreenImageInfo GetOffscreenImageInfo() const override;
     std::unique_ptr<VulkanDevice> CreateDevice(vk::SurfaceKHR surface,
                                                const vk::Extent2D& actual_extent) const override;
     const FrameInFlight& DrawFrameOffscreen() override;

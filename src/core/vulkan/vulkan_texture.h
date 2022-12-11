@@ -26,7 +26,9 @@ public:
                          const VmaAllocationCreateInfo& alloc_create_info);
     ~VulkanImage();
 
-    VkImage operator*() const;
+    VkImage operator*() const noexcept {
+        return image;
+    }
 
     VmaAllocator allocator{};
     VmaAllocation allocation{};

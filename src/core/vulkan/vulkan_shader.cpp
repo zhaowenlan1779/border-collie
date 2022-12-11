@@ -20,8 +20,4 @@ VulkanShader::VulkanShader(const vk::raii::Device& device, const std::filesystem
 
 VulkanShader::~VulkanShader() = default;
 
-const vk::ShaderModule& VulkanShader::operator*() const {
-    return *shader_module;
-}
-
 } // namespace Renderer

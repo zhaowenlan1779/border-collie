@@ -108,7 +108,7 @@ bool VulkanDevice::CreateDevice(
                                   .queueFamilyIndex = graphics_queue_family,
                               }};
 
-    allocator = std::make_unique<VulkanAllocator>(instance, physical_device, device);
+    allocator = std::make_unique<VulkanAllocator>(instance, *this);
 
     const auto& data = Common::ReadFileContents(PipelineCachePath);
     pipeline_cache = vk::raii::PipelineCache{

@@ -1,8 +1,4 @@
-if(APPLE)
-    set(spv_version vulkan1.1)
-else()
-    set(spv_version vulkan1.2)
-endif()
+set(spv_version vulkan1.3)
 
 function(target_shaders target)
     set(shader_files ${ARGN})

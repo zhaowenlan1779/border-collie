@@ -39,9 +39,20 @@ public:
     virtual void OnResized(const vk::Extent2D& actual_extent);
 
 protected:
+    // Interface for derived classes
+    struct OffscreenImageInfo {
+        vk::Format format;
+        vk::ImageUsageFlags usage;
+        vk::PipelineStageFlags2 dst_stage_mask;
+        vk::AccessFlags2 dst_access_mask;
+    };
+    virtual OffscreenImageInfo GetOffscreenImageInfo() const = 0;
+
     virtual std::unique_ptr<VulkanDevice> CreateDevice(vk::SurfaceKHR surface,
                                                        const vk::Extent2D& actual_extent) const = 0;
+
     virtual const FrameInFlight& DrawFrameOffscreen() = 0;
+
     void CreateRenderTargets();
     void PostprocessAndPresent(const FrameInFlight& offscreen_frame);
 

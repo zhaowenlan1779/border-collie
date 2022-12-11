@@ -27,16 +27,16 @@ public:
         const Helpers::GenericStructureChain<vk::PhysicalDeviceFeatures2>& features);
     ~VulkanDevice();
 
-    vk::raii::Device& operator*() {
+    vk::raii::Device& operator*() noexcept {
         return device;
     }
-    const vk::raii::Device& operator*() const {
+    const vk::raii::Device& operator*() const noexcept {
         return device;
     }
-    vk::raii::Device* operator->() {
+    vk::raii::Device* operator->() noexcept {
         return &device;
     }
-    const vk::raii::Device* operator->() const {
+    const vk::raii::Device* operator->() const noexcept {
         return &device;
     }
 

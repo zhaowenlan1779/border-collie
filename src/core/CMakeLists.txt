@@ -1,4 +1,6 @@
 add_library(core STATIC
+    vulkan/vulkan_accel_structure.cpp
+    vulkan/vulkan_accel_structure.h
     vulkan/vulkan_allocator.cpp
     vulkan/vulkan_allocator.h
     vulkan/vulkan_buffer.cpp
@@ -13,6 +15,8 @@ add_library(core STATIC
     vulkan/vulkan_helpers.hpp
     vulkan/vulkan_pipeline.cpp
     vulkan/vulkan_pipeline.h
+    vulkan/vulkan_raytracing_pipeline.cpp
+    vulkan/vulkan_raytracing_pipeline.h
     vulkan/vulkan_shader.cpp
     vulkan/vulkan_shader.h
     vulkan/vulkan_swapchain.cpp
@@ -29,6 +33,9 @@ add_library(core STATIC
 target_shaders(core
     shaders/postprocessing.frag
     shaders/postprocessing.vert
+    shaders/raytracing_hw/raytrace.rchit
+    shaders/raytracing_hw/raytrace.rgen
+    shaders/raytracing_hw/raytrace.rmiss
     shaders/test.frag
     shaders/test.vert
 )

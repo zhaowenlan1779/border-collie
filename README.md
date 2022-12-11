@@ -7,7 +7,7 @@ IIIS 2022 Fall: Advanced Computer Graphics - Final Project, by Pengfei Zhu.
 * (If time permits) Simple glTF editor
 
 ## Building
-The build system is CMake. Requires the Vulkan SDK to be installed.
+The build system is CMake. Requires the Vulkan SDK to be installed. Targets Vulkan 1.3, Windows / Linux.
 
 C++20 features are heavily used, so this requires a C++20-capable compiler. Clang does not work because `ranges` is broken (as of now), but GCC and MSVC seem fine.
 

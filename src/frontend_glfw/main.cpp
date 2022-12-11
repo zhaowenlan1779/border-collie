@@ -14,6 +14,7 @@
 #include "common/common_types.h"
 #include "common/log.h"
 #include "common/scope_exit.h"
+#include "core/vulkan_path_tracer_hw.h"
 #include "core/vulkan_rasterizer.h"
 
 bool g_should_render = true;
@@ -45,9 +46,9 @@ int main() {
     std::vector<const char*> extensions{extensions_raw, extensions_raw + extension_count};
 
 #ifdef NDEBUG
-    Renderer::VulkanRasterizer renderer{false, std::move(extensions)};
+    Renderer::VulkanPathTracerHW renderer{false, std::move(extensions)};
 #else
-    Renderer::VulkanRasterizer renderer{true, std::move(extensions)};
+    Renderer::VulkanPathTracerHW renderer{true, std::move(extensions)};
 #endif
 
     VkSurfaceKHR surface;

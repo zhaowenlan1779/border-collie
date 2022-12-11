@@ -17,7 +17,9 @@ public:
     explicit VulkanShader(const vk::raii::Device& device, const std::filesystem::path& path);
     ~VulkanShader();
 
-    const vk::ShaderModule& operator*() const;
+    const vk::ShaderModule& operator*() const noexcept {
+        return *shader_module;
+    }
 
 private:
     vk::raii::ShaderModule shader_module = nullptr;

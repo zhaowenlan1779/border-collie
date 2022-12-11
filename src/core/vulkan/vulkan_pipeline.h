@@ -20,7 +20,7 @@ class VulkanImage;
 class VulkanUniformBuffer;
 
 template <typename T>
-inline vk::PushConstantRange PushConstant(vk::ShaderStageFlags stages) {
+constexpr vk::PushConstantRange PushConstant(vk::ShaderStageFlags stages) {
     static_assert(Helpers::VerifyLayoutStd140<T>());
     return {
         .stageFlags = stages,
@@ -34,7 +34,7 @@ struct DescriptorBinding {
     u32 count{};
     vk::ShaderStageFlags stages{};
 
-    // Only one of the following 3 should be set. If `size` is set, `type` must be
+    // Only one of the following 4 should be set. If `size` is set, `type` must be
     // eUniformBuffer, and the buffer will be created and owned by the pipeline.
     struct BufferRef {
         vk::ArrayProxy<const vk::Buffer> buffers;
@@ -46,13 +46,14 @@ struct DescriptorBinding {
         vk::ImageLayout layout;
     };
     vk::ArrayProxy<const ImageRef> images;
+    vk::ArrayProxy<const vk::AccelerationStructureKHR> accel_structures;
 
     // Create uniform buffer
     std::size_t size{};
 };
 
 template <typename T>
-inline DescriptorBinding UBO(vk::ShaderStageFlags stages) {
+constexpr DescriptorBinding UBO(vk::ShaderStageFlags stages) {
     static_assert(Helpers::VerifyLayoutStd140<T>());
     return {
         .type = vk::DescriptorType::eUniformBuffer,

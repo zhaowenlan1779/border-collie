@@ -23,6 +23,15 @@ VulkanRasterizer::~VulkanRasterizer() {
     (*device)->waitIdle();
 }
 
+VulkanRenderer::OffscreenImageInfo VulkanRasterizer::GetOffscreenImageInfo() const {
+    return {
+        .format = swap_chain->surface_format.format,
+        .usage = vk::ImageUsageFlagBits::eColorAttachment,
+        .dst_stage_mask = vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+        .dst_access_mask = vk::AccessFlagBits2::eColorAttachmentWrite,
+    };
+}
+
 std::unique_ptr<VulkanDevice> VulkanRasterizer::CreateDevice(
     vk::SurfaceKHR surface, [[maybe_unused]] const vk::Extent2D& actual_extent) const {
     return std::make_unique<VulkanDevice>(
@@ -46,6 +55,12 @@ struct Vertex {
     glm::vec2 pos;
     glm::vec3 color;
     glm::vec2 texCoord;
+};
+
+struct VulkanRasterizer::UniformBufferObject {
+    glm::mat4 model;
+    glm::mat4 view;
+    glm::mat4 proj;
 };
 
 void VulkanRasterizer::Init(vk::SurfaceKHR surface, const vk::Extent2D& actual_extent) {
@@ -163,12 +178,6 @@ void VulkanRasterizer::Init(vk::SurfaceKHR surface, const vk::Extent2D& actual_e
 
     CreateFramebuffers();
 }
-
-struct VulkanRasterizer::UniformBufferObject {
-    glm::mat4 model;
-    glm::mat4 view;
-    glm::mat4 proj;
-};
 
 VulkanRasterizer::UniformBufferObject VulkanRasterizer::GetUniformBufferObject() const {
     static auto startTime = std::chrono::high_resolution_clock::now();

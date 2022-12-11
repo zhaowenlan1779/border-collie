@@ -26,11 +26,14 @@ public:
                           const VmaAllocationCreateInfo& alloc_create_info);
     ~VulkanBuffer();
 
-    VkBuffer operator*() const;
+    VkBuffer operator*() const noexcept {
+        return buffer;
+    }
 
     VmaAllocator allocator{};
     VmaAllocation allocation{};
     VmaAllocationInfo allocation_info{};
+    std::size_t size{};
 
 protected:
     VkBuffer buffer{};
@@ -41,8 +44,7 @@ protected:
  */
 class VulkanStagingBuffer : public VulkanBuffer {
 public:
-    explicit VulkanStagingBuffer(const VulkanAllocator& allocator,
-                                 const vk::raii::CommandPool& command_pool, std::size_t size);
+    explicit VulkanStagingBuffer(const VulkanAllocator& allocator, std::size_t size);
     ~VulkanStagingBuffer();
 
     vk::raii::CommandBuffer command_buffer = nullptr;
@@ -52,9 +54,9 @@ public:
 struct VulkanImmUploadBufferCreateInfo {
     const u8* data;
     std::size_t size;
-    vk::BufferUsageFlags usage;
-    vk::PipelineStageFlags2 dst_stage_mask;
-    vk::AccessFlags2 dst_access_mask;
+    vk::BufferUsageFlags usage{};
+    vk::PipelineStageFlags2 dst_stage_mask{};
+    vk::AccessFlags2 dst_access_mask{};
 };
 
 /**
@@ -74,7 +76,7 @@ public:
 
     void Upload(const vk::raii::CommandBuffer& command_buffer,
                 vk::PipelineStageFlags2 dst_stage_mask);
-    void* operator*() const;
+    void* operator*() const noexcept;
 
     const VulkanAllocator& allocator;
     VulkanBuffer dst_buffer;

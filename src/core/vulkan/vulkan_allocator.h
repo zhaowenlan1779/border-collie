@@ -12,6 +12,7 @@
 
 namespace Renderer {
 
+class VulkanDevice;
 class VulkanStagingBuffer;
 
 /**
@@ -19,24 +20,21 @@ class VulkanStagingBuffer;
  */
 class VulkanAllocator final : NonCopyable {
 public:
-    explicit VulkanAllocator(const vk::raii::Instance& instance,
-                             const vk::raii::PhysicalDevice& physical_device,
-                             const vk::raii::Device& device);
+    explicit VulkanAllocator(const vk::raii::Instance& instance, const VulkanDevice& device);
     ~VulkanAllocator();
 
     // Creates a staging buffer that returns itself to the ownership of the allocator
     // when submitted
     struct StagingBufferHandle : NonCopyable {
-        explicit StagingBufferHandle(VulkanAllocator& allocator,
-                                     const vk::raii::CommandPool& command_pool, std::size_t size);
-        void Submit(const vk::raii::Queue& queue);
+        explicit StagingBufferHandle(VulkanAllocator& allocator, std::size_t size);
+        void Submit();
         ~StagingBufferHandle();
 
-        VulkanStagingBuffer& operator*() {
+        VulkanStagingBuffer& operator*() noexcept {
             return *buffer;
         }
 
-        const VulkanStagingBuffer& operator*() const {
+        const VulkanStagingBuffer& operator*() const noexcept {
             return *buffer;
         }
 
@@ -45,15 +43,16 @@ public:
         std::unique_ptr<VulkanStagingBuffer> buffer;
         vk::raii::Fence fence;
     };
-    [[nodiscard]] StagingBufferHandle CreateStagingBuffer(const vk::raii::CommandPool& command_pool,
-                                                          std::size_t size);
+    [[nodiscard]] StagingBufferHandle CreateStagingBuffer(std::size_t size);
 
     // Should be called from the render thread.
     void CleanupStagingBuffers();
 
-    VmaAllocator operator*() const;
+    VmaAllocator operator*() const noexcept {
+        return allocator;
+    }
 
-    const vk::raii::Device& device;
+    const VulkanDevice& device;
 
 private:
     VmaAllocator allocator = nullptr;

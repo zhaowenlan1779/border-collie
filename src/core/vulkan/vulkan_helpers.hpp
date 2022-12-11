@@ -102,9 +102,14 @@ struct GenericStructureChain {
     operator T*() {
         return first_ptr;
     }
-
     operator const T*() const {
         return first_ptr;
+    }
+    operator T&() {
+        return *first_ptr;
+    }
+    operator const T&() const {
+        return *first_ptr;
     }
 
     std::unique_ptr<u8[]> data;
