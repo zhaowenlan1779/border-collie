@@ -73,9 +73,8 @@ struct Vertex {
 };
 
 struct VulkanPathTracerHW::UniformBufferObject {
-    glm::mat4 model;
-    glm::mat4 view;
-    glm::mat4 proj;
+    glm::mat4 view_inverse;
+    glm::mat4 proj_inverse;
 };
 
 void VulkanPathTracerHW::Init(vk::SurfaceKHR surface, const vk::Extent2D& actual_extent) {
@@ -231,11 +230,11 @@ VulkanPathTracerHW::UniformBufferObject VulkanPathTracerHW::GetUniformBufferObje
         swap_chain->extent.width / static_cast<float>(swap_chain->extent.height), 0.1f, 10.0f);
     proj[1][1] *= -1;
     return {
-        .model =
-            glm::rotate(glm::mat4(1.0f), time * glm::radians(90.0f), glm::vec3(0.0f, 0.0f, 1.0f)),
-        .view = glm::lookAt(glm::vec3(2.0f, 2.0f, 2.0f), glm::vec3(0.0f, 0.0f, 0.0f),
-                            glm::vec3(0.0f, 0.0f, 1.0f)),
-        .proj = proj,
+        // .model =
+        //    glm::rotate(glm::mat4(1.0f), time * glm::radians(90.0f), glm::vec3(0.0f, 0.0f, 1.0f)),
+        .view_inverse = glm::inverse(glm::lookAt(
+            glm::vec3(2.0f, 2.0f, 2.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f))),
+        .proj_inverse = glm::inverse(proj),
     };
 }
 

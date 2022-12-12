@@ -25,8 +25,9 @@ public:
         return *as;
     }
 
-private:
     std::unique_ptr<VulkanBuffer> buffer;
+
+private:
     vk::raii::AccelerationStructureKHR as = nullptr;
 };
 

@@ -45,15 +45,34 @@ VulkanAccelStructure::VulkanAccelStructure(
     const vk::ArrayProxy<const std::unique_ptr<VulkanAccelStructure>>& instances)
     : device((*instances.begin())->device), type(vk::AccelerationStructureTypeKHR::eTopLevel) {
 
+    const auto instance_geometries = Common::VectorFromRange(
+        instances | std::views::transform([this](const auto& ptr) {
+            return vk::AccelerationStructureInstanceKHR{
+                .transform = {std::array{
+                    std::array{1.0f, 0.0f, 0.0f, 0.0f},
+                    std::array{0.0f, 1.0f, 0.0f, 0.0f},
+                    std::array{0.0f, 0.0f, 1.0f, 0.0f},
+                }},
+                .instanceCustomIndex = 0,
+                .mask = 0xFF,
+                .instanceShaderBindingTableRecordOffset = 0,
+                .flags = VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR,
+                .accelerationStructureReference = device->getBufferAddress({
+                    .buffer = **ptr->compacted_as->buffer,
+                }),
+            };
+        }));
+
     instances_buffer = std::make_unique<VulkanImmUploadBuffer>(
-        device, VulkanImmUploadBufferCreateInfo{
-                    .data = reinterpret_cast<const u8*>(instances.data()),
-                    .size = instances.size() * sizeof(vk::AccelerationStructureInstanceKHR),
-                    .usage = vk::BufferUsageFlagBits::eAccelerationStructureBuildInputReadOnlyKHR |
-                             vk::BufferUsageFlagBits::eShaderDeviceAddress,
-                    .dst_stage_mask = vk::PipelineStageFlagBits2::eAccelerationStructureBuildKHR,
-                    .dst_access_mask = vk::AccessFlagBits2::eShaderRead,
-                });
+        device,
+        VulkanImmUploadBufferCreateInfo{
+            .data = reinterpret_cast<const u8*>(instance_geometries.data()),
+            .size = instance_geometries.size() * sizeof(vk::AccelerationStructureInstanceKHR),
+            .usage = vk::BufferUsageFlagBits::eAccelerationStructureBuildInputReadOnlyKHR |
+                     vk::BufferUsageFlagBits::eShaderDeviceAddress,
+            .dst_stage_mask = vk::PipelineStageFlagBits2::eAccelerationStructureBuildKHR,
+            .dst_access_mask = vk::AccessFlagBits2::eShaderRead,
+        });
     Init(
         vk::AccelerationStructureGeometryKHR{
             .geometryType = vk::GeometryTypeKHR::eInstances,
