@@ -2,10 +2,13 @@
 // Licensed under GPLv2 or any later version
 // Refer to the license.txt file included.
 
+#include <array>
 #include <chrono>
 #include <glm/gtc/matrix_transform.hpp>
+#include "core/vulkan/vulkan_allocator.h"
 #include "core/vulkan/vulkan_buffer.h"
 #include "core/vulkan/vulkan_context.h"
+#include "core/vulkan/vulkan_frames_in_flight.hpp"
 #include "core/vulkan/vulkan_graphics_pipeline.h"
 #include "core/vulkan/vulkan_helpers.hpp"
 #include "core/vulkan/vulkan_shader.h"
@@ -44,6 +47,10 @@ std::unique_ptr<VulkanDevice> VulkanRasterizer::CreateDevice(
                                                {
                                                    .samplerAnisotropy = VK_TRUE,
                                                },
+                                       },
+                                       // We don't need this in itself, but we enabled it on VMA
+                                       vk::PhysicalDeviceVulkan12Features{
+                                           .bufferDeviceAddress = VK_TRUE,
                                        },
                                        vk::PhysicalDeviceVulkan13Features{
                                            .pipelineCreationCacheControl = VK_TRUE,
@@ -92,12 +99,42 @@ void VulkanRasterizer::Init(vk::SurfaceKHR surface, const vk::Extent2D& actual_e
 
     texture = std::make_unique<VulkanTexture>(*device, u8"textures/texture.jpg");
 
-    // Pipeline
-    static constexpr auto VertexAttributeDescriptions = Helpers::AttributeDescriptionsFor<Vertex>();
+    frames = std::make_unique<VulkanFramesInFlight<Frame, 2>>(*device);
+    for (auto& frame_in_flight : frames->frames_in_flight) {
+        frame_in_flight.extras.uniform =
+            std::make_unique<VulkanUniformBufferObject<UniformBufferObject>>(
+                *device->allocator, vk::PipelineStageFlagBits2::eVertexShader);
+    }
+    frames->CreateDescriptors({{
+        {
+            .type = vk::DescriptorType::eUniformBuffer,
+            .count = 1,
+            .stages = vk::ShaderStageFlagBits::eVertex,
+            .buffers = {{
+                {
+                    *frames->frames_in_flight[0].extras.uniform->dst_buffer,
+                    *frames->frames_in_flight[1].extras.uniform->dst_buffer,
+                },
+            }},
+        },
+        {
+            .type = vk::DescriptorType::eCombinedImageSampler,
+            .count = 1,
+            .stages = vk::ShaderStageFlagBits::eFragment,
+            .images =
+                {
+                    {
+                        .images = {*texture->image_view},
+                        .layout = vk::ImageLayout::eShaderReadOnlyOptimal,
+                    },
+                },
+        },
+    }});
 
-    // clang-format off
-    pipeline = std::make_unique<VulkanGraphicsPipeline>(*device, VulkanGraphicsPipelineCreateInfo{
-        .render_pass_info = {
+    // Pipeline
+    render_pass = vk::raii::RenderPass{
+        **device,
+        {
             .attachmentCount = 1,
             .pAttachments = TempArr<vk::AttachmentDescription>{{
                 .format = swap_chain->surface_format.format,
@@ -125,8 +162,12 @@ void VulkanRasterizer::Init(vk::SurfaceKHR surface, const vk::Extent2D& actual_e
                 .srcAccessMask = vk::AccessFlags{},
                 .dstAccessMask = vk::AccessFlagBits::eColorAttachmentWrite,
             }},
-        },
-        .pipeline_info = {
+        }};
+
+    static constexpr auto VertexAttributeDescriptions = Helpers::AttributeDescriptionsFor<Vertex>();
+    pipeline = std::make_unique<VulkanGraphicsPipeline>(
+        *device,
+        vk::GraphicsPipelineCreateInfo{
             .stageCount = 2,
             .pStages = TempArr<vk::PipelineShaderStageCreateInfo>{{
                 {
@@ -150,31 +191,11 @@ void VulkanRasterizer::Init(vk::SurfaceKHR surface, const vk::Extent2D& actual_e
                 .vertexAttributeDescriptionCount = VertexAttributeDescriptions.size(),
                 .pVertexAttributeDescriptions = VertexAttributeDescriptions.data(),
             }},
+            .renderPass = *render_pass,
         },
-        .descriptor_sets = {{
-            UBO<UniformBufferObject>(vk::ShaderStageFlagBits::eVertex),
-            {
-                .type = vk::DescriptorType::eCombinedImageSampler,
-                .count = 1,
-                .stages = vk::ShaderStageFlagBits::eFragment,
-                .images = {
-                    {
-                        .images = {*texture->image_view},
-                        .layout = vk::ImageLayout::eShaderReadOnlyOptimal,
-                    },
-                },
-            },
-        }},
-        .push_constants = {
+        frames->CreatePipelineLayout({
             PushConstant<glm::mat4>(vk::ShaderStageFlagBits::eVertex),
-        },
-    });
-    // clang-format on
-
-    // Assign buffers
-    pipeline->vertex_buffers = {**vertex_buffer};
-    pipeline->index_buffer = **index_buffer;
-    pipeline->index_buffer_type = vk::IndexType::eUint16;
+        }));
 
     CreateFramebuffers();
 }
@@ -217,21 +238,34 @@ glm::mat4 VulkanRasterizer::GetPushConstant() const {
            glm::rotate(glm::mat4(1.0f), time * glm::radians(90.0f), glm::vec3(0.0f, 0.0f, 1.0f));
 }
 
-const FrameInFlight& VulkanRasterizer::DrawFrameOffscreen() {
-    const auto& frame = pipeline->AcquireNextFrame();
-    pipeline->WriteUniformObject<UniformBufferObject>({GetUniformBufferObject()});
+void VulkanRasterizer::DrawFrame() {
+    device->allocator->CleanupStagingBuffers();
 
-    pipeline->BeginFrame({
-        .framebuffer = *framebuffers[frame.index],
-        .renderArea =
-            {
-                .extent = swap_chain->extent,
-            },
-    });
-    frame.command_buffer.pushConstants<glm::mat4>(
-        *pipeline->pipeline_layout, vk::ShaderStageFlagBits::eVertex, 0, {GetPushConstant()});
-    frame.command_buffer.drawIndexed(6, 1, 0, 0, 0);
-    pipeline->EndFrame();
+    const auto& frame = frames->AcquireNextFrame();
+    const auto& cmd = frame.command_buffer;
+    frame.extras.uniform->Update(GetUniformBufferObject());
+
+    frames->BeginFrame();
+    frame.extras.uniform->Upload(cmd);
+
+    pipeline->BeginRenderPass(cmd, {
+                                       .framebuffer = *frame.extras.framebuffer,
+                                       .renderArea =
+                                           {
+                                               .extent = swap_chain->extent,
+                                           },
+                                   });
+    cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, **pipeline);
+    cmd.bindVertexBuffers(0, {**vertex_buffer}, {0});
+    cmd.bindIndexBuffer(**index_buffer, 0, vk::IndexType::eUint16);
+    cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *pipeline->pipeline_layout, 0,
+                           frames->GetDescriptorSets(), {});
+    cmd.pushConstants<glm::mat4>(*pipeline->pipeline_layout, vk::ShaderStageFlagBits::eVertex, 0,
+                                 {GetPushConstant()});
+    cmd.drawIndexed(6, 1, 0, 0, 0);
+    cmd.endRenderPass();
+
+    frames->EndFrame();
 
     device->graphics_queue.submit(
         {
@@ -243,20 +277,23 @@ const FrameInFlight& VulkanRasterizer::DrawFrameOffscreen() {
             },
         },
         *frame.in_flight_fence);
-    return frame;
+
+    PostprocessAndPresent(*frame.render_finished_semaphore);
 }
 
 void VulkanRasterizer::CreateFramebuffers() {
-    for (std::size_t i = 0; i < framebuffers.size(); ++i) {
-        framebuffers[i] = vk::raii::Framebuffer{
-            **device, vk::FramebufferCreateInfo{
-                          .renderPass = *pipeline->render_pass,
-                          .attachmentCount = 1,
-                          .pAttachments = TempArr<vk::ImageView>{*offscreen_frames[i].image_view},
-                          .width = swap_chain->extent.width,
-                          .height = swap_chain->extent.height,
-                          .layers = 1,
-                      }};
+    for (std::size_t i = 0; i < frames->frames_in_flight.size(); ++i) {
+        frames->frames_in_flight[i].extras.framebuffer = vk::raii::Framebuffer{
+            **device,
+            vk::FramebufferCreateInfo{
+                .renderPass = *render_pass,
+                .attachmentCount = 1,
+                .pAttachments =
+                    TempArr<vk::ImageView>{*pp_frames->frames_in_flight[i].extras.image_view},
+                .width = swap_chain->extent.width,
+                .height = swap_chain->extent.height,
+                .layers = 1,
+            }};
     }
 }
 

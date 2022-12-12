@@ -2,11 +2,13 @@
 // Licensed under GPLv2 or any later version
 // Refer to the license.txt file included.
 
+#include <array>
 #include <spdlog/spdlog.h>
 #include "common/temp_ptr.h"
 #include "core/vulkan/vulkan_allocator.h"
 #include "core/vulkan/vulkan_context.h"
 #include "core/vulkan/vulkan_device.h"
+#include "core/vulkan/vulkan_frames_in_flight.hpp"
 #include "core/vulkan/vulkan_graphics_pipeline.h"
 #include "core/vulkan/vulkan_helpers.hpp"
 #include "core/vulkan/vulkan_shader.h"
@@ -37,15 +39,33 @@ const vk::raii::Instance& VulkanRenderer::GetVulkanInstance() const {
 
 void VulkanRenderer::Init(vk::SurfaceKHR surface, const vk::Extent2D& actual_extent) {
     device = CreateDevice(surface, actual_extent);
-
     swap_chain = std::make_unique<VulkanSwapchain>(*device, actual_extent);
 
-    CreateRenderTargets();
+    pp_frames = std::make_unique<VulkanFramesInFlight<OffscreenFrame, 2>>(*device);
 
-    // Pipeline
-    // clang-format off
-    pp_pipeline = std::make_unique<VulkanGraphicsPipeline>(*device, VulkanGraphicsPipelineCreateInfo{
-        .render_pass_info = {
+    CreateRenderTargets();
+    pp_frames->CreateDescriptors({{
+        {
+            .type = vk::DescriptorType::eCombinedImageSampler,
+            .count = 1,
+            .stages = vk::ShaderStageFlagBits::eFragment,
+            .images =
+                {
+                    {
+                        .images =
+                            {
+                                *pp_frames->frames_in_flight[0].extras.image_view,
+                                *pp_frames->frames_in_flight[1].extras.image_view,
+                            },
+                        .layout = vk::ImageLayout::eGeneral,
+                    },
+                },
+        },
+    }});
+
+    pp_render_pass = vk::raii::RenderPass{
+        **device,
+        {
             .attachmentCount = 1,
             .pAttachments = TempArr<vk::AttachmentDescription>{{
                 .format = swap_chain->surface_format.format,
@@ -73,8 +93,11 @@ void VulkanRenderer::Init(vk::SurfaceKHR surface, const vk::Extent2D& actual_ext
                 .srcAccessMask = vk::AccessFlagBits::eColorAttachmentWrite,
                 .dstAccessMask = vk::AccessFlagBits::eUniformRead,
             }},
-        },
-        .pipeline_info = {
+        }};
+
+    pp_pipeline = std::make_unique<VulkanGraphicsPipeline>(
+        *device,
+        vk::GraphicsPipelineCreateInfo{
             .stageCount = 2,
             .pStages = TempArr<vk::PipelineShaderStageCreateInfo>{{
                 {
@@ -92,34 +115,24 @@ void VulkanRenderer::Init(vk::SurfaceKHR surface, const vk::Extent2D& actual_ext
                 .cullMode = vk::CullModeFlagBits::eNone,
                 .lineWidth = 1.0f,
             }},
+            .renderPass = *pp_render_pass,
         },
-        .descriptor_sets = {{
-            {
-                .type = vk::DescriptorType::eCombinedImageSampler,
-                .count = 1,
-                .stages = vk::ShaderStageFlagBits::eFragment,
-                .images = {
-                    {
-                        .images = {
-                            *offscreen_frames[0].image_view,
-                            *offscreen_frames[1].image_view,
-                        },
-                        .layout = vk::ImageLayout::eGeneral,
-                    },
-                },
-            },
-        }},
-    });
-    // clang-format on
+        pp_frames->CreatePipelineLayout({
+            PushConstant<glm::mat4>(vk::ShaderStageFlagBits::eVertex),
+        }));
 
-    swap_chain->CreateFramebuffers(pp_pipeline->render_pass);
+    swap_chain->CreateFramebuffers(pp_render_pass);
 }
 
 void VulkanRenderer::CreateRenderTargets() {
     Helpers::OneTimeCommandContext context{*device};
 
     const auto& info = GetOffscreenImageInfo();
-    for (auto& frame : offscreen_frames) {
+    for (auto& frame_in_flight : pp_frames->frames_in_flight) {
+        auto& frame = frame_in_flight.extras;
+
+        frame.render_start_semaphore = vk::raii::Semaphore{**device, vk::SemaphoreCreateInfo{}};
+
         frame.image = std::make_unique<VulkanImage>(
             *device->allocator,
             vk::ImageCreateInfo{
@@ -176,32 +189,39 @@ void VulkanRenderer::CreateRenderTargets() {
     }
 }
 
-void VulkanRenderer::PostprocessAndPresent(const FrameInFlight& offscreen_frame) {
-    const auto& frame = pp_pipeline->AcquireNextFrame();
+void VulkanRenderer::PostprocessAndPresent(vk::Semaphore offscreen_render_finished_semaphore) {
+    const auto& frame = pp_frames->AcquireNextFrame();
+    const auto& cmd = frame.command_buffer;
 
-    const auto& framebuffer = swap_chain->AcquireImage(*frame.render_start_semaphore);
+    const auto& framebuffer = swap_chain->AcquireImage(*frame.extras.render_start_semaphore);
     if (!framebuffer.has_value()) {
         SPDLOG_ERROR("Failed to acquire image, ignoring");
         return;
     }
 
-    pp_pipeline->BeginFrame({
-        .framebuffer = *framebuffer->get(),
-        .renderArea =
-            {
-                .extent = swap_chain->extent,
-            },
-    });
-    frame.command_buffer.draw(3, 1, 0, 0);
-    pp_pipeline->EndFrame();
+    pp_frames->BeginFrame();
+
+    pp_pipeline->BeginRenderPass(cmd, {
+                                          .framebuffer = *framebuffer->get(),
+                                          .renderArea =
+                                              {
+                                                  .extent = swap_chain->extent,
+                                              },
+                                      });
+    cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, **pp_pipeline);
+    cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *pp_pipeline->pipeline_layout, 0,
+                           pp_frames->GetDescriptorSets(), {});
+    cmd.draw(3, 1, 0, 0);
+    cmd.endRenderPass();
+
+    pp_frames->EndFrame();
 
     device->graphics_queue.submit(
         {
             {
                 .waitSemaphoreCount = 2,
-                .pWaitSemaphores =
-                    TempArr<vk::Semaphore>{*offscreen_frame.render_finished_semaphore,
-                                           *frame.render_start_semaphore},
+                .pWaitSemaphores = TempArr<vk::Semaphore>{offscreen_render_finished_semaphore,
+                                                          *frame.extras.render_start_semaphore},
                 .pWaitDstStageMask =
                     TempArr<vk::PipelineStageFlags>{
                         vk::PipelineStageFlagBits::eFragmentShader,
@@ -217,34 +237,27 @@ void VulkanRenderer::PostprocessAndPresent(const FrameInFlight& offscreen_frame)
     swap_chain->Present(*frame.render_finished_semaphore);
 }
 
-void VulkanRenderer::DrawFrame() {
-    device->allocator->CleanupStagingBuffers();
-
-    const auto& offscreen_frame = DrawFrameOffscreen();
-    PostprocessAndPresent(offscreen_frame);
-}
-
 void VulkanRenderer::OnResized(const vk::Extent2D& actual_extent) {
     (*device)->waitIdle();
 
     swap_chain.reset(); // Need to destroy old first
     swap_chain = std::make_unique<VulkanSwapchain>(*device, actual_extent);
-    swap_chain->CreateFramebuffers(pp_pipeline->render_pass);
+    swap_chain->CreateFramebuffers(pp_render_pass);
 
     CreateRenderTargets();
-    pp_pipeline->UpdateDescriptor(0, 0,
-                                  {
-                                      .type = vk::DescriptorType::eCombinedImageSampler,
-                                      .count = 1,
-                                      .images = {{
-                                          .images =
-                                              {
-                                                  *offscreen_frames[0].image_view,
-                                                  *offscreen_frames[1].image_view,
-                                              },
-                                          .layout = vk::ImageLayout::eGeneral,
-                                      }},
-                                  });
+    pp_frames->UpdateDescriptor(0, 0,
+                                {
+                                    .type = vk::DescriptorType::eCombinedImageSampler,
+                                    .count = 1,
+                                    .images = {{
+                                        .images =
+                                            {
+                                                *pp_frames->frames_in_flight[0].extras.image_view,
+                                                *pp_frames->frames_in_flight[1].extras.image_view,
+                                            },
+                                        .layout = vk::ImageLayout::eGeneral,
+                                    }},
+                                });
 }
 
 } // namespace Renderer

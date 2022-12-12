@@ -6,9 +6,11 @@
 #include <chrono>
 #include <glm/gtc/matrix_transform.hpp>
 #include "core/vulkan/vulkan_accel_structure.h"
+#include "core/vulkan/vulkan_allocator.h"
 #include "core/vulkan/vulkan_buffer.h"
 #include "core/vulkan/vulkan_context.h"
 #include "core/vulkan/vulkan_device.h"
+#include "core/vulkan/vulkan_frames_in_flight.hpp"
 #include "core/vulkan/vulkan_helpers.hpp"
 #include "core/vulkan/vulkan_raytracing_pipeline.h"
 #include "core/vulkan/vulkan_shader.h"
@@ -150,72 +152,82 @@ void VulkanPathTracerHW::Init(vk::SurfaceKHR surface, const vk::Extent2D& actual
     tlas->Compact(true);
     tlas->Cleanup(true);
 
-    // clang-format off
-    pipeline = std::make_unique<VulkanRayTracingPipeline>(*device, VulkanRayTracingPipelineCreateInfo{
-        .pipeline_info =
-            {
-                .stageCount = 3,
-                .pStages = TempArr<vk::PipelineShaderStageCreateInfo>{{
-                    {
-                        .stage = vk::ShaderStageFlagBits::eRaygenKHR,
-                        .module =
-                            *VulkanShader{**device, u8"core/shaders/raytracing_hw/raytrace.rgen"},
-                        .pName = "main",
-                    },
-                    {
-                        .stage = vk::ShaderStageFlagBits::eMissKHR,
-                        .module =
-                            *VulkanShader{**device, u8"core/shaders/raytracing_hw/raytrace.rmiss"},
-                        .pName = "main",
-                    },
-                    {
-                        .stage = vk::ShaderStageFlagBits::eClosestHitKHR,
-                        .module =
-                            *VulkanShader{**device, u8"core/shaders/raytracing_hw/raytrace.rchit"},
-                        .pName = "main",
-                    },
-                }},
-                .groupCount = 3,
-                .pGroups = TempArr<vk::RayTracingShaderGroupCreateInfoKHR>{{
-                    General(0),
-                    General(1),
-                    TrianglesGroup({
-                        .closestHitShader = 2,
-                        .anyHitShader = VK_SHADER_UNUSED_KHR,
-                        .intersectionShader = VK_SHADER_UNUSED_KHR,
-                    }),
-                }},
-            },
-        .descriptor_sets = {{
-            {
-                .type = vk::DescriptorType::eAccelerationStructureKHR,
-                .count = 1,
-                .stages = vk::ShaderStageFlagBits::eRaygenKHR,
-                .accel_structures = **tlas,
-            },
-            {
-                .type = vk::DescriptorType::eStorageImage,
-                .count = 1,
-                .stages = vk::ShaderStageFlagBits::eRaygenKHR,
+    frames = std::make_unique<VulkanFramesInFlight<Frame, 2>>(*device);
+    for (auto& frame_in_flight : frames->frames_in_flight) {
+        frame_in_flight.extras.uniform =
+            std::make_unique<VulkanUniformBufferObject<UniformBufferObject>>(
+                *device->allocator, vk::PipelineStageFlagBits2::eRayTracingShaderKHR);
+    }
+    frames->CreateDescriptors({{
+        {
+            .type = vk::DescriptorType::eAccelerationStructureKHR,
+            .count = 1,
+            .stages = vk::ShaderStageFlagBits::eRaygenKHR,
+            .accel_structures = **tlas,
+        },
+        {
+            .type = vk::DescriptorType::eStorageImage,
+            .count = 1,
+            .stages = vk::ShaderStageFlagBits::eRaygenKHR,
+            .images = {{
                 .images =
-                    {{
-                        .images =
-                            {
-                                *offscreen_frames[0].image_view,
-                                *offscreen_frames[1].image_view,
-                            },
-                        .layout = vk::ImageLayout::eGeneral,
-                    }},
-            },
-        }, {
-            UBO<UniformBufferObject>(vk::ShaderStageFlagBits::eRaygenKHR),
-        }},
-        .push_constants =
-            {
-                PushConstant<glm::mat4>(vk::ShaderStageFlagBits::eRaygenKHR),
-            },
-    });
-    // clang-format on
+                    {
+                        *pp_frames->frames_in_flight[0].extras.image_view,
+                        *pp_frames->frames_in_flight[1].extras.image_view,
+                    },
+                .layout = vk::ImageLayout::eGeneral,
+            }},
+        },
+        {
+            .type = vk::DescriptorType::eUniformBuffer,
+            .count = 1,
+            .stages = vk::ShaderStageFlagBits::eRaygenKHR,
+            .buffers = {{
+                {
+                    *frames->frames_in_flight[0].extras.uniform->dst_buffer,
+                    *frames->frames_in_flight[1].extras.uniform->dst_buffer,
+                },
+            }},
+        },
+    }});
+
+    pipeline = std::make_unique<VulkanRayTracingPipeline>(
+        *device,
+        vk::RayTracingPipelineCreateInfoKHR{
+            .stageCount = 3,
+            .pStages = TempArr<vk::PipelineShaderStageCreateInfo>{{
+                {
+                    .stage = vk::ShaderStageFlagBits::eRaygenKHR,
+                    .module = *VulkanShader{**device, u8"core/shaders/raytracing_hw/raytrace.rgen"},
+                    .pName = "main",
+                },
+                {
+                    .stage = vk::ShaderStageFlagBits::eMissKHR,
+                    .module =
+                        *VulkanShader{**device, u8"core/shaders/raytracing_hw/raytrace.rmiss"},
+                    .pName = "main",
+                },
+                {
+                    .stage = vk::ShaderStageFlagBits::eClosestHitKHR,
+                    .module =
+                        *VulkanShader{**device, u8"core/shaders/raytracing_hw/raytrace.rchit"},
+                    .pName = "main",
+                },
+            }},
+            .groupCount = 3,
+            .pGroups = TempArr<vk::RayTracingShaderGroupCreateInfoKHR>{{
+                General(0),
+                General(1),
+                TrianglesGroup({
+                    .closestHitShader = 2,
+                    .anyHitShader = VK_SHADER_UNUSED_KHR,
+                    .intersectionShader = VK_SHADER_UNUSED_KHR,
+                }),
+            }},
+        },
+        frames->CreatePipelineLayout({
+            PushConstant<glm::mat4>(vk::ShaderStageFlagBits::eRaygenKHR),
+        }));
 }
 
 VulkanPathTracerHW::UniformBufferObject VulkanPathTracerHW::GetUniformBufferObject() const {
@@ -238,45 +250,49 @@ VulkanPathTracerHW::UniformBufferObject VulkanPathTracerHW::GetUniformBufferObje
     };
 }
 
-const FrameInFlight& VulkanPathTracerHW::DrawFrameOffscreen() {
-    const auto& frame = pipeline->AcquireNextFrame();
-    pipeline->WriteUniformObject<UniformBufferObject>({GetUniformBufferObject()});
+void VulkanPathTracerHW::DrawFrame() {
+    device->allocator->CleanupStagingBuffers();
 
-    pipeline->BeginFrame();
-    frame.command_buffer.traceRaysKHR(pipeline->rgen_region, pipeline->miss_region,
-                                      pipeline->hit_region, pipeline->call_region,
-                                      swap_chain->extent.width, swap_chain->extent.height, 1);
-    pipeline->EndFrame();
+    const auto& frame = frames->AcquireNextFrame();
+    const auto& cmd = frame.command_buffer;
+    frame.extras.uniform->Update(GetUniformBufferObject());
+
+    frames->BeginFrame();
+    frame.extras.uniform->Upload(cmd);
+
+    cmd.bindPipeline(vk::PipelineBindPoint::eRayTracingKHR, **pipeline);
+    cmd.bindDescriptorSets(vk::PipelineBindPoint::eRayTracingKHR, *pipeline->pipeline_layout, 0,
+                           frames->GetDescriptorSets(), {});
+    pipeline->TraceRays(cmd, swap_chain->extent.width, swap_chain->extent.height, 1);
+    frames->EndFrame();
 
     device->graphics_queue.submit(
-        {
-            {
-                .commandBufferCount = 1,
-                .pCommandBuffers = TempArr<vk::CommandBuffer>{*frame.command_buffer},
-                .signalSemaphoreCount = 1,
-                .pSignalSemaphores = TempArr<vk::Semaphore>{*frame.render_finished_semaphore},
-            },
-        },
+        {{
+            .commandBufferCount = 1,
+            .pCommandBuffers = TempArr<vk::CommandBuffer>{*frame.command_buffer},
+            .signalSemaphoreCount = 1,
+            .pSignalSemaphores = TempArr<vk::Semaphore>{*frame.render_finished_semaphore},
+        }},
         *frame.in_flight_fence);
-    return frame;
+    PostprocessAndPresent(*frame.render_finished_semaphore);
 }
 
 void VulkanPathTracerHW::OnResized(const vk::Extent2D& actual_extent) {
     VulkanRenderer::OnResized(actual_extent);
-    pipeline->UpdateDescriptor(0, 1,
-                               {
-                                   .type = vk::DescriptorType::eStorageImage,
-                                   .count = 1,
-                                   .stages = vk::ShaderStageFlagBits::eRaygenKHR,
-                                   .images = {{
-                                       .images =
-                                           {
-                                               *offscreen_frames[0].image_view,
-                                               *offscreen_frames[1].image_view,
-                                           },
-                                       .layout = vk::ImageLayout::eGeneral,
-                                   }},
-                               });
+    frames->UpdateDescriptor(0, 1,
+                             {
+                                 .type = vk::DescriptorType::eStorageImage,
+                                 .count = 1,
+                                 .stages = vk::ShaderStageFlagBits::eRaygenKHR,
+                                 .images = {{
+                                     .images =
+                                         {
+                                             *pp_frames->frames_in_flight[0].extras.image_view,
+                                             *pp_frames->frames_in_flight[1].extras.image_view,
+                                         },
+                                     .layout = vk::ImageLayout::eGeneral,
+                                 }},
+                             });
 }
 
 } // namespace Renderer

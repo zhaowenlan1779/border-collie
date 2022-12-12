@@ -6,11 +6,12 @@
 
 #include <memory>
 #include <vulkan/vulkan_raii.hpp>
-#include "core/vulkan/vulkan_pipeline.h"
+#include "common/common_types.h"
 
 namespace Renderer {
 
 class VulkanBuffer;
+class VulkanDevice;
 
 constexpr vk::RayTracingShaderGroupCreateInfoKHR General(u32 shader_idx) {
     return {
@@ -30,18 +31,21 @@ constexpr vk::RayTracingShaderGroupCreateInfoKHR TrianglesGroup(
     return in_info;
 }
 
-struct VulkanRayTracingPipelineCreateInfo {
-    vk::RayTracingPipelineCreateInfoKHR pipeline_info;
-    vk::ArrayProxy<const DescriptorSet> descriptor_sets;
-    vk::ArrayProxy<const vk::PushConstantRange> push_constants;
-};
-class VulkanRayTracingPipeline final : public VulkanPipeline {
+class VulkanRayTracingPipeline : NonCopyable {
 public:
     explicit VulkanRayTracingPipeline(const VulkanDevice& device,
-                                      VulkanRayTracingPipelineCreateInfo create_info);
+                                      vk::RayTracingPipelineCreateInfoKHR create_info,
+                                      vk::raii::PipelineLayout pipeline_layout);
     ~VulkanRayTracingPipeline();
 
-    void BeginFrame();
+    vk::Pipeline operator*() const noexcept {
+        return *pipeline;
+    }
+
+    void TraceRays(const vk::raii::CommandBuffer& cmd, u32 width, u32 height, u32 depth) const;
+
+    vk::raii::Pipeline pipeline = nullptr;
+    vk::raii::PipelineLayout pipeline_layout = nullptr;
 
     vk::StridedDeviceAddressRegionKHR rgen_region;
     vk::StridedDeviceAddressRegionKHR miss_region;

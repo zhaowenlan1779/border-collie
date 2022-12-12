@@ -4,7 +4,6 @@
 
 #pragma once
 
-#include <array>
 #include <memory>
 #include <utility>
 #include <vector>
@@ -18,7 +17,9 @@ class VulkanDevice;
 class VulkanImage;
 class VulkanGraphicsPipeline;
 class VulkanSwapchain;
-struct FrameInFlight;
+
+template <typename ExtraData, std::size_t NumFramesInFlight>
+class VulkanFramesInFlight;
 
 /**
  * Base class for Vulkan based renderers.
@@ -35,7 +36,7 @@ public:
     const vk::raii::Instance& GetVulkanInstance() const;
 
     virtual void Init(vk::SurfaceKHR surface, const vk::Extent2D& actual_extent);
-    void DrawFrame();
+    virtual void DrawFrame() = 0;
     virtual void OnResized(const vk::Extent2D& actual_extent);
 
 protected:
@@ -47,25 +48,22 @@ protected:
         vk::AccessFlags2 dst_access_mask;
     };
     virtual OffscreenImageInfo GetOffscreenImageInfo() const = 0;
-
     virtual std::unique_ptr<VulkanDevice> CreateDevice(vk::SurfaceKHR surface,
                                                        const vk::Extent2D& actual_extent) const = 0;
-
-    virtual const FrameInFlight& DrawFrameOffscreen() = 0;
-
     void CreateRenderTargets();
-    void PostprocessAndPresent(const FrameInFlight& offscreen_frame);
+    void PostprocessAndPresent(vk::Semaphore offscreen_render_finished_semaphore);
 
     std::unique_ptr<VulkanContext> context;
     std::unique_ptr<VulkanDevice> device;
     std::unique_ptr<VulkanSwapchain> swap_chain;
+    vk::raii::RenderPass pp_render_pass = nullptr;
 
     struct OffscreenFrame {
+        vk::raii::Semaphore render_start_semaphore = nullptr;
         std::unique_ptr<VulkanImage> image;
         vk::raii::ImageView image_view = nullptr;
     };
-    std::array<OffscreenFrame, 2> offscreen_frames;
-    std::size_t current_frame = 0;
+    std::unique_ptr<VulkanFramesInFlight<OffscreenFrame, 2>> pp_frames;
     std::unique_ptr<VulkanGraphicsPipeline> pp_pipeline;
 };
 

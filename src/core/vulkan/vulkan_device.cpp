@@ -55,7 +55,9 @@ bool VulkanDevice::CreateDevice(
     graphics_queue_family = *std::ranges::find_if(
         std::ranges::iota_view<u32, u32>(0, static_cast<u32>(queue_families.size())),
         [&queue_families](u32 i) {
-            return static_cast<bool>(queue_families[i].queueFlags & vk::QueueFlagBits::eGraphics);
+            // TODO: Support separate queues
+            return static_cast<bool>(queue_families[i].queueFlags & vk::QueueFlagBits::eGraphics) &&
+                   static_cast<bool>(queue_families[i].queueFlags & vk::QueueFlagBits::eCompute);
         });
     present_queue_family = *std::ranges::find_if(
         std::ranges::iota_view<u32, u32>(0, static_cast<u32>(queue_families.size())),

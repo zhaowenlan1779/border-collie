@@ -4,7 +4,6 @@
 
 #pragma once
 
-#include <array>
 #include <memory>
 #include <utility>
 #include <vector>
@@ -18,20 +17,23 @@ class VulkanGraphicsPipeline;
 class VulkanImmUploadBuffer;
 class VulkanTexture;
 
-class VulkanRasterizer : public VulkanRenderer {
+template <typename T>
+class VulkanUniformBufferObject;
+
+class VulkanRasterizer final : public VulkanRenderer {
 public:
     explicit VulkanRasterizer(bool enable_validation_layers,
                               std::vector<const char*> frontend_required_extensions);
     ~VulkanRasterizer() override;
 
     void Init(vk::SurfaceKHR surface, const vk::Extent2D& actual_extent) override;
+    void DrawFrame() override;
     void OnResized(const vk::Extent2D& actual_extent) override;
 
 private:
     OffscreenImageInfo GetOffscreenImageInfo() const override;
     std::unique_ptr<VulkanDevice> CreateDevice(vk::SurfaceKHR surface,
                                                const vk::Extent2D& actual_extent) const override;
-    const FrameInFlight& DrawFrameOffscreen() override;
 
     struct UniformBufferObject;
     UniformBufferObject GetUniformBufferObject() const;
@@ -42,9 +44,14 @@ private:
     std::unique_ptr<VulkanImmUploadBuffer> vertex_buffer{};
     std::unique_ptr<VulkanImmUploadBuffer> index_buffer{};
     std::unique_ptr<VulkanTexture> texture{};
-    std::unique_ptr<VulkanGraphicsPipeline> pipeline;
 
-    std::array<vk::raii::Framebuffer, 2> framebuffers{{nullptr, nullptr}};
+    vk::raii::RenderPass render_pass = nullptr;
+    struct Frame {
+        std::unique_ptr<VulkanUniformBufferObject<UniformBufferObject>> uniform{};
+        vk::raii::Framebuffer framebuffer = nullptr;
+    };
+    std::unique_ptr<VulkanFramesInFlight<Frame, 2>> frames;
+    std::unique_ptr<VulkanGraphicsPipeline> pipeline;
 };
 
 } // namespace Renderer

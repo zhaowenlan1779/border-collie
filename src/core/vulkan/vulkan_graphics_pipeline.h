@@ -4,35 +4,33 @@
 
 #pragma once
 
-#include <vector>
+#include <memory>
+#include <utility>
 #include <vulkan/vulkan_raii.hpp>
-#include "core/vulkan/vulkan_pipeline.h"
+#include "common/common_types.h"
 
 namespace Renderer {
 
-struct VulkanGraphicsPipelineCreateInfo {
-    vk::RenderPassCreateInfo render_pass_info;
-    vk::GraphicsPipelineCreateInfo pipeline_info;
-    vk::ArrayProxy<const DescriptorSet> descriptor_sets;
-    vk::ArrayProxy<const vk::PushConstantRange> push_constants;
-};
-class VulkanGraphicsPipeline final : public VulkanPipeline {
+class VulkanDevice;
+
+class VulkanGraphicsPipeline : NonCopyable {
 public:
     // The parameters in GraphicsPipelineCreateInfo will be set to default values if not set.
     explicit VulkanGraphicsPipeline(const VulkanDevice& device,
-                                    VulkanGraphicsPipelineCreateInfo create_info);
+                                    vk::GraphicsPipelineCreateInfo pipeline_info,
+                                    vk::raii::PipelineLayout pipeline_layout);
     ~VulkanGraphicsPipeline();
 
-    // No need to actually specify the render_pass here
-    void BeginFrame(vk::RenderPassBeginInfo render_pass_begin);
-    void EndFrame();
+    vk::Pipeline operator*() const noexcept {
+        return *pipeline;
+    }
 
-    vk::raii::RenderPass render_pass = nullptr;
+    void BeginRenderPass(const vk::raii::CommandBuffer& command_buffer,
+                         vk::RenderPassBeginInfo render_pass_begin) const;
+
     vk::raii::Pipeline pipeline = nullptr;
-
-    std::vector<vk::Buffer> vertex_buffers;
-    vk::Buffer index_buffer{};
-    vk::IndexType index_buffer_type = vk::IndexType::eUint32;
+    vk::raii::PipelineLayout pipeline_layout = nullptr;
+    vk::RenderPass render_pass{};
     bool dynamic_viewport_scissor = false;
 };
 

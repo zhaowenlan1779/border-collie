@@ -2,24 +2,20 @@
 // Licensed under GPLv2 or any later version
 // Refer to the license.txt file included.
 
-#include <map>
-#include "common/ranges.h"
-#include "common/temp_ptr.h"
+#include <algorithm>
+#include <vector>
 #include "core/vulkan/vulkan_device.h"
 #include "core/vulkan/vulkan_graphics_pipeline.h"
 
 namespace Renderer {
 
 VulkanGraphicsPipeline::VulkanGraphicsPipeline(const VulkanDevice& device,
-                                               VulkanGraphicsPipelineCreateInfo create_info)
-    : VulkanPipeline(device, create_info.descriptor_sets, create_info.push_constants) {
-
-    render_pass = vk::raii::RenderPass{*device, create_info.render_pass_info};
+                                               vk::GraphicsPipelineCreateInfo pipeline_info,
+                                               vk::raii::PipelineLayout pipeline_layout_)
+    : pipeline_layout(std::move(pipeline_layout_)) {
 
     // Fill out the pipeline create info
     // TODO: This might be too restrictive?
-    auto& pipeline_info = create_info.pipeline_info;
-
     static constexpr vk::PipelineVertexInputStateCreateInfo vertex_input_state{};
     if (!pipeline_info.pVertexInputState) {
         pipeline_info.pVertexInputState = &vertex_input_state;
@@ -79,10 +75,8 @@ VulkanGraphicsPipeline::VulkanGraphicsPipeline(const VulkanDevice& device,
     }
 
     pipeline_info.layout = *pipeline_layout;
-    pipeline_info.renderPass = *render_pass;
 
-    pipeline = vk::raii::Pipeline{*device, device.pipeline_cache, pipeline_info};
-
+    render_pass = pipeline_info.renderPass;
     const auto IsDynamicState = [&pipeline_info](vk::DynamicState state) {
         return std::find(pipeline_info.pDynamicState->pDynamicStates,
                          pipeline_info.pDynamicState->pDynamicStates +
@@ -93,17 +87,15 @@ VulkanGraphicsPipeline::VulkanGraphicsPipeline(const VulkanDevice& device,
     if (IsDynamicState(vk::DynamicState::eViewport) && IsDynamicState(vk::DynamicState::eScissor)) {
         dynamic_viewport_scissor = true;
     }
+
+    pipeline = vk::raii::Pipeline{*device, device.pipeline_cache, pipeline_info};
 }
 
 VulkanGraphicsPipeline::~VulkanGraphicsPipeline() = default;
 
-void VulkanGraphicsPipeline::BeginFrame(vk::RenderPassBeginInfo render_pass_begin) {
-    auto& frame = frames_in_flight[current_frame];
-
-    VulkanPipeline::BeginFrame();
-    const auto& command_buffer = frame.command_buffer;
-
-    render_pass_begin.renderPass = *render_pass;
+void VulkanGraphicsPipeline::BeginRenderPass(const vk::raii::CommandBuffer& command_buffer,
+                                             vk::RenderPassBeginInfo render_pass_begin) const {
+    render_pass_begin.renderPass = render_pass;
     static constexpr vk::ClearValue clear_value{{{{0.0f, 0.0f, 0.0f, 1.0f}}}};
     if (render_pass_begin.clearValueCount == 0) {
         render_pass_begin.clearValueCount = 1;
@@ -112,20 +104,6 @@ void VulkanGraphicsPipeline::BeginFrame(vk::RenderPassBeginInfo render_pass_begi
 
     command_buffer.beginRenderPass(render_pass_begin, vk::SubpassContents::eInline);
     command_buffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *pipeline);
-
-    if (!vertex_buffers.empty()) {
-        command_buffer.bindVertexBuffers(0, vertex_buffers,
-                                         std::vector<vk::DeviceSize>(vertex_buffers.size(), 0));
-    }
-    if (index_buffer) {
-        command_buffer.bindIndexBuffer(index_buffer, 0, index_buffer_type);
-    }
-
-    const auto& raw_descriptor_sets = Common::VectorFromRange(
-        frame.descriptor_sets | std::views::transform(&vk::raii::DescriptorSet::operator*));
-    command_buffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *pipeline_layout, 0,
-                                      raw_descriptor_sets, {});
-
     if (dynamic_viewport_scissor) {
         command_buffer.setViewport(
             0, {{
@@ -140,13 +118,6 @@ void VulkanGraphicsPipeline::BeginFrame(vk::RenderPassBeginInfo render_pass_begi
                                          .extent = render_pass_begin.renderArea.extent,
                                      }});
     }
-}
-
-void VulkanGraphicsPipeline::EndFrame() {
-    const auto& frame = frames_in_flight[current_frame];
-    frame.command_buffer.endRenderPass();
-
-    VulkanPipeline::EndFrame();
 }
 
 } // namespace Renderer

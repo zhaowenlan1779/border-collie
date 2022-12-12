@@ -17,6 +17,8 @@ class VulkanAccelStructure;
 class VulkanImmUploadBuffer;
 class VulkanTexture;
 class VulkanRayTracingPipeline;
+template <typename T>
+class VulkanUniformBufferObject;
 
 class VulkanPathTracerHW : public VulkanRenderer {
 public:
@@ -25,13 +27,13 @@ public:
     ~VulkanPathTracerHW() override;
 
     void Init(vk::SurfaceKHR surface, const vk::Extent2D& actual_extent) override;
+    void DrawFrame() override;
     void OnResized(const vk::Extent2D& actual_extent) override;
 
 private:
     OffscreenImageInfo GetOffscreenImageInfo() const override;
     std::unique_ptr<VulkanDevice> CreateDevice(vk::SurfaceKHR surface,
                                                const vk::Extent2D& actual_extent) const override;
-    const FrameInFlight& DrawFrameOffscreen() override;
 
     struct UniformBufferObject;
     UniformBufferObject GetUniformBufferObject() const;
@@ -41,6 +43,11 @@ private:
     std::vector<std::unique_ptr<VulkanAccelStructure>> blas;
     std::unique_ptr<VulkanAccelStructure> tlas;
     std::unique_ptr<VulkanTexture> texture{};
+
+    struct Frame {
+        std::unique_ptr<VulkanUniformBufferObject<UniformBufferObject>> uniform{};
+    };
+    std::unique_ptr<VulkanFramesInFlight<Frame, 2>> frames;
     std::unique_ptr<VulkanRayTracingPipeline> pipeline;
 };
 

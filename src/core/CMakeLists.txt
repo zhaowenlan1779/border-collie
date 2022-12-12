@@ -9,6 +9,7 @@ add_library(core STATIC
     vulkan/vulkan_context.h
     vulkan/vulkan_device.cpp
     vulkan/vulkan_device.h
+    vulkan/vulkan_frames_in_flight.hpp
     vulkan/vulkan_graphics_pipeline.cpp
     vulkan/vulkan_graphics_pipeline.h
     vulkan/vulkan_helpers.cpp

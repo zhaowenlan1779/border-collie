@@ -2,30 +2,32 @@
 // Licensed under GPLv2 or any later version
 // Refer to the license.txt file included.
 
+#include <cstring>
+#include <vector>
 #include "common/alignment.h"
-#include "common/ranges.h"
 #include "core/vulkan/vulkan_buffer.h"
+#include "core/vulkan/vulkan_device.h"
 #include "core/vulkan/vulkan_raytracing_pipeline.h"
 
 namespace Renderer {
 
 VulkanRayTracingPipeline::VulkanRayTracingPipeline(const VulkanDevice& device,
-                                                   VulkanRayTracingPipelineCreateInfo create_info)
-    : VulkanPipeline(device, create_info.descriptor_sets, create_info.push_constants) {
+                                                   vk::RayTracingPipelineCreateInfoKHR create_info,
+                                                   vk::raii::PipelineLayout pipeline_layout_)
+    : pipeline_layout(std::move(pipeline_layout_)) {
 
-    auto& pipeline_info = create_info.pipeline_info;
-    pipeline_info.layout = *pipeline_layout;
-    pipeline = vk::raii::Pipeline{*device, nullptr, device.pipeline_cache, pipeline_info};
+    create_info.layout = *pipeline_layout;
+    pipeline = vk::raii::Pipeline{*device, nullptr, device.pipeline_cache, create_info};
 
     // Count the groups
     u32 count_rgen = 0;
     u32 count_miss = 0;
     u32 count_hit = 0;
     u32 count_call = 0;
-    for (std::size_t i = 0; i < pipeline_info.groupCount; ++i) {
-        const auto& group_info = create_info.pipeline_info.pGroups[i];
+    for (std::size_t i = 0; i < create_info.groupCount; ++i) {
+        const auto& group_info = create_info.pGroups[i];
         if (group_info.type == vk::RayTracingShaderGroupTypeKHR::eGeneral) {
-            const auto stage = pipeline_info.pStages[group_info.generalShader].stage;
+            const auto stage = create_info.pStages[group_info.generalShader].stage;
             if (stage == vk::ShaderStageFlagBits::eRaygenKHR) {
                 count_rgen++;
             } else if (stage == vk::ShaderStageFlagBits::eMissKHR) {
@@ -93,7 +95,7 @@ VulkanRayTracingPipeline::VulkanRayTracingPipeline(const VulkanDevice& device,
 
     // Write handles
     const auto& handles = pipeline.getRayTracingShaderGroupHandlesKHR<u8>(
-        0, pipeline_info.groupCount, properties.shaderGroupHandleSize * pipeline_info.groupCount);
+        0, create_info.groupCount, properties.shaderGroupHandleSize * create_info.groupCount);
 
     std::vector<u8> sbt_temp(sbt_buffer->size);
     const auto WriteHandle = [this, &properties = properties, &address, &handles,
@@ -110,10 +112,10 @@ VulkanRayTracingPipeline::VulkanRayTracingPipeline(const VulkanDevice& device,
     u32 written_miss = 0;
     u32 written_hit = 0;
     u32 written_call = 0;
-    for (std::size_t i = 0; i < pipeline_info.groupCount; ++i) {
-        const auto& group_info = create_info.pipeline_info.pGroups[i];
+    for (std::size_t i = 0; i < create_info.groupCount; ++i) {
+        const auto& group_info = create_info.pGroups[i];
         if (group_info.type == vk::RayTracingShaderGroupTypeKHR::eGeneral) {
-            const auto stage = pipeline_info.pStages[group_info.generalShader].stage;
+            const auto stage = create_info.pStages[group_info.generalShader].stage;
             if (stage == vk::ShaderStageFlagBits::eRaygenKHR) {
                 WriteHandle(rgen_region, i, written_rgen);
             } else if (stage == vk::ShaderStageFlagBits::eMissKHR) {
@@ -133,16 +135,9 @@ VulkanRayTracingPipeline::VulkanRayTracingPipeline(const VulkanDevice& device,
 
 VulkanRayTracingPipeline::~VulkanRayTracingPipeline() = default;
 
-void VulkanRayTracingPipeline::BeginFrame() {
-    const auto& frame = frames_in_flight[current_frame];
-
-    VulkanPipeline::BeginFrame();
-    frame.command_buffer.bindPipeline(vk::PipelineBindPoint::eRayTracingKHR, *pipeline);
-
-    const auto& raw_descriptor_sets = Common::VectorFromRange(
-        frame.descriptor_sets | std::views::transform(&vk::raii::DescriptorSet::operator*));
-    frame.command_buffer.bindDescriptorSets(vk::PipelineBindPoint::eRayTracingKHR, *pipeline_layout,
-                                            0, raw_descriptor_sets, {});
+void VulkanRayTracingPipeline::TraceRays(const vk::raii::CommandBuffer& cmd, u32 width, u32 height,
+                                         u32 depth) const {
+    cmd.traceRaysKHR(rgen_region, miss_region, hit_region, call_region, width, height, depth);
 }
 
 } // namespace Renderer
