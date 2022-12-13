@@ -194,54 +194,68 @@ void VulkanRasterizer::Init(vk::SurfaceKHR surface, const vk::Extent2D& actual_e
     depth_format = FindDepthFormat(device->physical_device);
 
     // Pipeline
-    render_pass = vk::raii::RenderPass{
-        **device,
-        {
-            .attachmentCount = 2,
-            .pAttachments =
-                TempArr<vk::AttachmentDescription>{
-                    {
-                        .format = swap_chain->surface_format.format,
-                        .loadOp = vk::AttachmentLoadOp::eClear,
-                        .storeOp = vk::AttachmentStoreOp::eStore,
-                        .stencilLoadOp = vk::AttachmentLoadOp::eDontCare,
-                        .stencilStoreOp = vk::AttachmentStoreOp::eDontCare,
-                        .finalLayout = vk::ImageLayout::eGeneral,
+    render_pass =
+        vk::raii::RenderPass{
+            **device,
+            {
+                .attachmentCount = 2,
+                .pAttachments =
+                    TempArr<vk::AttachmentDescription>{
+                        {
+                            .format = swap_chain->surface_format.format,
+                            .loadOp = vk::AttachmentLoadOp::eClear,
+                            .storeOp = vk::AttachmentStoreOp::eStore,
+                            .stencilLoadOp = vk::AttachmentLoadOp::eDontCare,
+                            .stencilStoreOp = vk::AttachmentStoreOp::eDontCare,
+                            .finalLayout = vk::ImageLayout::eGeneral,
+                        },
+                        {
+                            .format = depth_format,
+                            .loadOp = vk::AttachmentLoadOp::eClear,
+                            .storeOp = vk::AttachmentStoreOp::eDontCare,
+                            .stencilLoadOp = vk::AttachmentLoadOp::eDontCare,
+                            .stencilStoreOp = vk::AttachmentStoreOp::eDontCare,
+                            .finalLayout = vk::ImageLayout::eDepthStencilAttachmentOptimal,
+                        },
                     },
-                    {
-                        .format = depth_format,
-                        .loadOp = vk::AttachmentLoadOp::eClear,
-                        .storeOp = vk::AttachmentStoreOp::eDontCare,
-                        .stencilLoadOp = vk::AttachmentLoadOp::eDontCare,
-                        .stencilStoreOp = vk::AttachmentStoreOp::eDontCare,
-                        .finalLayout = vk::ImageLayout::eDepthStencilAttachmentOptimal,
+                .subpassCount = 1,
+                .pSubpasses = TempArr<vk::SubpassDescription>{{
+                    .pipelineBindPoint = vk::PipelineBindPoint::eGraphics,
+                    .colorAttachmentCount = 1,
+                    .pColorAttachments = TempArr<vk::AttachmentReference>{{
+                        .attachment = 0,
+                        .layout = vk::ImageLayout::eGeneral,
+                    }},
+                    .pDepthStencilAttachment = TempArr<vk::AttachmentReference>{{
+                        .attachment = 1,
+                        .layout = vk::ImageLayout::eDepthStencilAttachmentOptimal,
+                    }},
+                }},
+                .dependencyCount = 2,
+                .pDependencies =
+                    TempArr<vk::SubpassDependency>{
+                        {
+                            .srcSubpass = VK_SUBPASS_EXTERNAL,
+                            .dstSubpass = 0,
+                            .srcStageMask = vk::PipelineStageFlagBits::eEarlyFragmentTests |
+                                            vk::PipelineStageFlagBits::eLateFragmentTests,
+                            .dstStageMask = vk::PipelineStageFlagBits::eEarlyFragmentTests |
+                                            vk::PipelineStageFlagBits::eLateFragmentTests,
+                            .srcAccessMask = vk::AccessFlagBits::eDepthStencilAttachmentRead |
+                                             vk::AccessFlagBits::eDepthStencilAttachmentWrite,
+                            .dstAccessMask = vk::AccessFlagBits::eDepthStencilAttachmentRead |
+                                             vk::AccessFlagBits::eDepthStencilAttachmentWrite,
+                        },
+                        {
+                            .srcSubpass = VK_SUBPASS_EXTERNAL,
+                            .dstSubpass = 0,
+                            .srcStageMask = vk::PipelineStageFlagBits::eNone,
+                            .dstStageMask = vk::PipelineStageFlagBits::eColorAttachmentOutput,
+                            .srcAccessMask = vk::AccessFlags{},
+                            .dstAccessMask = vk::AccessFlagBits::eColorAttachmentWrite,
+                        },
                     },
-                },
-            .subpassCount = 1,
-            .pSubpasses = TempArr<vk::SubpassDescription>{{
-                .pipelineBindPoint = vk::PipelineBindPoint::eGraphics,
-                .colorAttachmentCount = 1,
-                .pColorAttachments = TempArr<vk::AttachmentReference>{{
-                    .attachment = 0,
-                    .layout = vk::ImageLayout::eGeneral,
-                }},
-                .pDepthStencilAttachment = TempArr<vk::AttachmentReference>{{
-                    .attachment = 1,
-                    .layout = vk::ImageLayout::eDepthStencilAttachmentOptimal,
-                }},
-            }},
-            .dependencyCount = 1,
-            .pDependencies = TempArr<vk::SubpassDependency>{{
-                .srcSubpass = VK_SUBPASS_EXTERNAL,
-                .dstSubpass = 0,
-                .srcStageMask = vk::PipelineStageFlagBits::eNone,
-                .dstStageMask = vk::PipelineStageFlagBits::eColorAttachmentOutput |
-                                vk::PipelineStageFlagBits::eEarlyFragmentTests,
-                .srcAccessMask = vk::AccessFlags{},
-                .dstAccessMask = vk::AccessFlagBits::eColorAttachmentWrite |
-                                 vk::AccessFlagBits::eDepthStencilAttachmentWrite,
-            }},
-        }};
+            }};
 
     static constexpr auto VertexAttributeDescriptions = Helpers::AttributeDescriptionsFor<Vertex>();
     pipeline = std::make_unique<VulkanGraphicsPipeline>(
@@ -342,7 +356,7 @@ void VulkanRasterizer::DrawFrame() {
                                        .clearValueCount = 2,
                                        .pClearValues =
                                            TempArr<vk::ClearValue>{
-                                               {.color = {{{0.0f, 0.0f, 0.0f, 1.0f}}}},
+                                               {.color = {{{0.0f, 0.0f, 0.0f, 0.0f}}}},
                                                {.depthStencil = {1.0f, 0}},
                                            },
                                    });

@@ -88,7 +88,7 @@ void VulkanRenderer::Init(vk::SurfaceKHR surface, const vk::Extent2D& actual_ext
             .pDependencies = TempArr<vk::SubpassDependency>{{
                 .srcSubpass = VK_SUBPASS_EXTERNAL,
                 .dstSubpass = 0,
-                .srcStageMask = vk::PipelineStageFlagBits::eNone,
+                .srcStageMask = vk::PipelineStageFlagBits::eColorAttachmentOutput,
                 .dstStageMask = vk::PipelineStageFlagBits::eColorAttachmentOutput,
                 .srcAccessMask = vk::AccessFlagBits{},
                 .dstAccessMask = vk::AccessFlagBits::eColorAttachmentWrite,
@@ -178,8 +178,7 @@ void VulkanRenderer::PostprocessAndPresent(vk::Semaphore offscreen_render_finish
 
     const auto& framebuffer = swap_chain->AcquireImage(*frame.extras.render_start_semaphore);
     if (!framebuffer.has_value()) {
-        SPDLOG_ERROR("Failed to acquire image, ignoring");
-        return;
+        throw std::runtime_error("Failed to acquire image, ignoring");
     }
 
     pp_frames->BeginFrame();
@@ -206,8 +205,9 @@ void VulkanRenderer::PostprocessAndPresent(vk::Semaphore offscreen_render_finish
                 .pWaitSemaphores = TempArr<vk::Semaphore>{offscreen_render_finished_semaphore,
                                                           *frame.extras.render_start_semaphore},
                 .pWaitDstStageMask =
-                    TempArr<vk::PipelineStageFlags>{vk::PipelineStageFlagBits::eFragmentShader,
-                                                    vk::PipelineStageFlagBits::eTopOfPipe},
+                    TempArr<vk::PipelineStageFlags>{
+                        vk::PipelineStageFlagBits::eFragmentShader,
+                        vk::PipelineStageFlagBits::eColorAttachmentOutput},
                 .commandBufferCount = 1,
                 .pCommandBuffers = TempArr<vk::CommandBuffer>{*frame.command_buffer},
                 .signalSemaphoreCount = 1,

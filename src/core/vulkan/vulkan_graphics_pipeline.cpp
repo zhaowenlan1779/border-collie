@@ -103,7 +103,6 @@ void VulkanGraphicsPipeline::BeginRenderPass(const vk::raii::CommandBuffer& comm
     }
 
     command_buffer.beginRenderPass(render_pass_begin, vk::SubpassContents::eInline);
-    command_buffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *pipeline);
     if (dynamic_viewport_scissor) {
         command_buffer.setViewport(
             0, {{
