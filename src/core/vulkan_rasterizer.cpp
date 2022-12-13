@@ -58,8 +58,63 @@ std::unique_ptr<VulkanDevice> VulkanRasterizer::CreateDevice(
                                        }});
 }
 
+static vk::Format FindDepthFormat(const vk::raii::PhysicalDevice& physical_device) {
+    static constexpr std::array<vk::Format, 3> Candidates{{
+        vk::Format::eD32Sfloat,
+        vk::Format::eD32SfloatS8Uint,
+        vk::Format::eD24UnormS8Uint,
+    }};
+
+    for (const auto format : Candidates) {
+        if (physical_device.getFormatProperties(format).optimalTilingFeatures &
+            vk::FormatFeatureFlagBits::eDepthStencilAttachment) {
+            return format;
+        }
+    }
+    throw std::runtime_error("Failed to find depth format!");
+}
+
+void VulkanRasterizer::CreateDepthResources() {
+    depth_image =
+        std::make_unique<VulkanImage>(*device->allocator,
+                                      vk::ImageCreateInfo{
+                                          .imageType = vk::ImageType::e2D,
+                                          .format = depth_format,
+                                          .extent =
+                                              {
+                                                  .width = swap_chain->extent.width,
+                                                  .height = swap_chain->extent.height,
+                                                  .depth = 1,
+                                              },
+                                          .mipLevels = 1,
+                                          .arrayLayers = 1,
+                                          .usage = vk::ImageUsageFlagBits::eDepthStencilAttachment,
+                                          .initialLayout = vk::ImageLayout::eUndefined,
+                                      },
+                                      VmaAllocationCreateInfo{
+                                          .flags = VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT,
+                                          .usage = VMA_MEMORY_USAGE_AUTO,
+                                          .priority = 1.0f,
+                                      });
+    depth_image_view =
+        vk::raii::ImageView{**device,
+                            {
+                                .image = **depth_image,
+                                .viewType = vk::ImageViewType::e2D,
+                                .format = depth_format,
+                                .subresourceRange =
+                                    {
+                                        .aspectMask = vk::ImageAspectFlagBits::eDepth,
+                                        .baseMipLevel = 0,
+                                        .levelCount = 1,
+                                        .baseArrayLayer = 0,
+                                        .layerCount = 1,
+                                    },
+                            }};
+}
+
 struct Vertex {
-    glm::vec2 pos;
+    glm::vec3 pos;
     glm::vec3 color;
     glm::vec2 texCoord;
 };
@@ -74,10 +129,15 @@ void VulkanRasterizer::Init(vk::SurfaceKHR surface, const vk::Extent2D& actual_e
     VulkanRenderer::Init(surface, actual_extent);
 
     // Buffers & Textures
-    const std::vector<Vertex> vertices = {{{-0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}, {1.0f, 0.0f}},
-                                          {{0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f}},
-                                          {{0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}, {0.0f, 1.0f}},
-                                          {{-0.5f, 0.5f}, {1.0f, 1.0f, 1.0f}, {1.0f, 1.0f}}};
+    const std::vector<Vertex> vertices = {{{-0.5f, -0.5f, 0.0f}, {1.0f, 0.0f, 0.0f}, {0.0f, 0.0f}},
+                                          {{0.5f, -0.5f, 0.0f}, {0.0f, 1.0f, 0.0f}, {1.0f, 0.0f}},
+                                          {{0.5f, 0.5f, 0.0f}, {0.0f, 0.0f, 1.0f}, {1.0f, 1.0f}},
+                                          {{-0.5f, 0.5f, 0.0f}, {1.0f, 1.0f, 1.0f}, {0.0f, 1.0f}},
+
+                                          {{-0.5f, -0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}, {0.0f, 0.0f}},
+                                          {{0.5f, -0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}, {1.0f, 0.0f}},
+                                          {{0.5f, 0.5f, -0.5f}, {0.0f, 0.0f, 1.0f}, {1.0f, 1.0f}},
+                                          {{-0.5f, 0.5f, -0.5f}, {1.0f, 1.0f, 1.0f}, {0.0f, 1.0f}}};
     vertex_buffer = std::make_unique<VulkanImmUploadBuffer>(
         *device, VulkanImmUploadBufferCreateInfo{
                      .data = reinterpret_cast<const u8*>(vertices.data()),
@@ -87,7 +147,7 @@ void VulkanRasterizer::Init(vk::SurfaceKHR surface, const vk::Extent2D& actual_e
                      .dst_access_mask = vk::AccessFlagBits2::eVertexAttributeRead,
                  });
 
-    const std::vector<u16> indices = {0, 1, 2, 2, 3, 0};
+    const std::vector<u16> indices = {0, 1, 2, 2, 3, 0, 4, 5, 6, 6, 7, 4};
     index_buffer = std::make_unique<VulkanImmUploadBuffer>(
         *device, VulkanImmUploadBufferCreateInfo{
                      .data = reinterpret_cast<const u8*>(indices.data()),
@@ -131,19 +191,32 @@ void VulkanRasterizer::Init(vk::SurfaceKHR surface, const vk::Extent2D& actual_e
         },
     }});
 
+    depth_format = FindDepthFormat(device->physical_device);
+
     // Pipeline
     render_pass = vk::raii::RenderPass{
         **device,
         {
-            .attachmentCount = 1,
-            .pAttachments = TempArr<vk::AttachmentDescription>{{
-                .format = swap_chain->surface_format.format,
-                .loadOp = vk::AttachmentLoadOp::eClear,
-                .storeOp = vk::AttachmentStoreOp::eStore,
-                .stencilLoadOp = vk::AttachmentLoadOp::eDontCare,
-                .stencilStoreOp = vk::AttachmentStoreOp::eDontCare,
-                .finalLayout = vk::ImageLayout::eGeneral,
-            }},
+            .attachmentCount = 2,
+            .pAttachments =
+                TempArr<vk::AttachmentDescription>{
+                    {
+                        .format = swap_chain->surface_format.format,
+                        .loadOp = vk::AttachmentLoadOp::eClear,
+                        .storeOp = vk::AttachmentStoreOp::eStore,
+                        .stencilLoadOp = vk::AttachmentLoadOp::eDontCare,
+                        .stencilStoreOp = vk::AttachmentStoreOp::eDontCare,
+                        .finalLayout = vk::ImageLayout::eGeneral,
+                    },
+                    {
+                        .format = depth_format,
+                        .loadOp = vk::AttachmentLoadOp::eClear,
+                        .storeOp = vk::AttachmentStoreOp::eDontCare,
+                        .stencilLoadOp = vk::AttachmentLoadOp::eDontCare,
+                        .stencilStoreOp = vk::AttachmentStoreOp::eDontCare,
+                        .finalLayout = vk::ImageLayout::eDepthStencilAttachmentOptimal,
+                    },
+                },
             .subpassCount = 1,
             .pSubpasses = TempArr<vk::SubpassDescription>{{
                 .pipelineBindPoint = vk::PipelineBindPoint::eGraphics,
@@ -152,15 +225,21 @@ void VulkanRasterizer::Init(vk::SurfaceKHR surface, const vk::Extent2D& actual_e
                     .attachment = 0,
                     .layout = vk::ImageLayout::eGeneral,
                 }},
+                .pDepthStencilAttachment = TempArr<vk::AttachmentReference>{{
+                    .attachment = 1,
+                    .layout = vk::ImageLayout::eDepthStencilAttachmentOptimal,
+                }},
             }},
             .dependencyCount = 1,
             .pDependencies = TempArr<vk::SubpassDependency>{{
                 .srcSubpass = VK_SUBPASS_EXTERNAL,
                 .dstSubpass = 0,
-                .srcStageMask = vk::PipelineStageFlagBits::eColorAttachmentOutput,
-                .dstStageMask = vk::PipelineStageFlagBits::eColorAttachmentOutput,
+                .srcStageMask = vk::PipelineStageFlagBits::eNone,
+                .dstStageMask = vk::PipelineStageFlagBits::eColorAttachmentOutput |
+                                vk::PipelineStageFlagBits::eEarlyFragmentTests,
                 .srcAccessMask = vk::AccessFlags{},
-                .dstAccessMask = vk::AccessFlagBits::eColorAttachmentWrite,
+                .dstAccessMask = vk::AccessFlagBits::eColorAttachmentWrite |
+                                 vk::AccessFlagBits::eDepthStencilAttachmentWrite,
             }},
         }};
 
@@ -191,12 +270,18 @@ void VulkanRasterizer::Init(vk::SurfaceKHR surface, const vk::Extent2D& actual_e
                 .vertexAttributeDescriptionCount = VertexAttributeDescriptions.size(),
                 .pVertexAttributeDescriptions = VertexAttributeDescriptions.data(),
             }},
+            .pDepthStencilState = TempPtr{vk::PipelineDepthStencilStateCreateInfo{
+                .depthTestEnable = VK_TRUE,
+                .depthWriteEnable = VK_TRUE,
+                .depthCompareOp = vk::CompareOp::eLess,
+            }},
             .renderPass = *render_pass,
         },
         frames->CreatePipelineLayout({
             PushConstant<glm::mat4>(vk::ShaderStageFlagBits::eVertex),
         }));
 
+    CreateDepthResources();
     CreateFramebuffers();
 }
 
@@ -254,6 +339,12 @@ void VulkanRasterizer::DrawFrame() {
                                            {
                                                .extent = swap_chain->extent,
                                            },
+                                       .clearValueCount = 2,
+                                       .pClearValues =
+                                           TempArr<vk::ClearValue>{
+                                               {.color = {{{0.0f, 0.0f, 0.0f, 1.0f}}}},
+                                               {.depthStencil = {1.0f, 0}},
+                                           },
                                    });
     cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, **pipeline);
     cmd.bindVertexBuffers(0, {**vertex_buffer}, {0});
@@ -262,7 +353,7 @@ void VulkanRasterizer::DrawFrame() {
                            frames->GetDescriptorSets(), {});
     cmd.pushConstants<glm::mat4>(*pipeline->pipeline_layout, vk::ShaderStageFlagBits::eVertex, 0,
                                  {GetPushConstant()});
-    cmd.drawIndexed(6, 1, 0, 0, 0);
+    cmd.drawIndexed(12, 1, 0, 0, 0);
     cmd.endRenderPass();
 
     frames->EndFrame();
@@ -287,9 +378,10 @@ void VulkanRasterizer::CreateFramebuffers() {
             **device,
             vk::FramebufferCreateInfo{
                 .renderPass = *render_pass,
-                .attachmentCount = 1,
+                .attachmentCount = 2,
                 .pAttachments =
-                    TempArr<vk::ImageView>{*pp_frames->frames_in_flight[i].extras.image_view},
+                    TempArr<vk::ImageView>{*pp_frames->frames_in_flight[i].extras.image_view,
+                                           *depth_image_view},
                 .width = swap_chain->extent.width,
                 .height = swap_chain->extent.height,
                 .layers = 1,
@@ -299,6 +391,7 @@ void VulkanRasterizer::CreateFramebuffers() {
 
 void VulkanRasterizer::OnResized([[maybe_unused]] const vk::Extent2D& actual_extent) {
     VulkanRenderer::OnResized(actual_extent);
+    CreateDepthResources();
     CreateFramebuffers();
 }
 

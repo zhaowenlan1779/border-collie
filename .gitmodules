@@ -13,3 +13,6 @@
 [submodule "stb"]
 	path = externals/stb/stb
 	url = git@github.com:nothings/stb.git
+[submodule "tinygltf"]
+	path = externals/tinygltf
+	url = git@github.com:syoyo/tinygltf.git

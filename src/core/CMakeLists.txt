@@ -41,5 +41,5 @@ target_shaders(core
     shaders/test.vert
 )
 
-target_link_libraries(core PUBLIC common Vulkan::Vulkan VulkanMemoryAllocator)
-target_link_libraries(core PRIVATE spdlog boost glm::glm stb_image cityhash)
+target_link_libraries(core PUBLIC common boost glm::glm Vulkan::Vulkan VulkanMemoryAllocator)
+target_link_libraries(core PRIVATE spdlog stb_image cityhash tinygltf)

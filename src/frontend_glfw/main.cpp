@@ -46,9 +46,9 @@ int main() {
     std::vector<const char*> extensions{extensions_raw, extensions_raw + extension_count};
 
 #ifdef NDEBUG
-    Renderer::VulkanPathTracerHW renderer{false, std::move(extensions)};
+    Renderer::VulkanRasterizer renderer{false, std::move(extensions)};
 #else
-    Renderer::VulkanPathTracerHW renderer{true, std::move(extensions)};
+    Renderer::VulkanRasterizer renderer{true, std::move(extensions)};
 #endif
 
     VkSurfaceKHR surface;

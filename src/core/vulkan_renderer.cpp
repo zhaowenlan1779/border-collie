@@ -88,10 +88,10 @@ void VulkanRenderer::Init(vk::SurfaceKHR surface, const vk::Extent2D& actual_ext
             .pDependencies = TempArr<vk::SubpassDependency>{{
                 .srcSubpass = VK_SUBPASS_EXTERNAL,
                 .dstSubpass = 0,
-                .srcStageMask = vk::PipelineStageFlagBits::eColorAttachmentOutput,
-                .dstStageMask = vk::PipelineStageFlagBits::eFragmentShader,
-                .srcAccessMask = vk::AccessFlagBits::eColorAttachmentWrite,
-                .dstAccessMask = vk::AccessFlagBits::eUniformRead,
+                .srcStageMask = vk::PipelineStageFlagBits::eNone,
+                .dstStageMask = vk::PipelineStageFlagBits::eColorAttachmentOutput,
+                .srcAccessMask = vk::AccessFlagBits{},
+                .dstAccessMask = vk::AccessFlagBits::eColorAttachmentWrite,
             }},
         }};
 
@@ -154,23 +154,6 @@ void VulkanRenderer::CreateRenderTargets() {
                 .usage = VMA_MEMORY_USAGE_AUTO,
                 .priority = 1.0f,
             });
-
-        Helpers::ImageLayoutTransition(
-            *context, frame.image,
-            {
-                .srcStageMask = vk::PipelineStageFlagBits2::eTopOfPipe,
-                .srcAccessMask = vk::AccessFlags2{},
-                .dstStageMask = info.dst_stage_mask | vk::PipelineStageFlagBits2::eFragmentShader,
-                .dstAccessMask = info.dst_access_mask | vk::AccessFlagBits2::eUniformRead,
-                .oldLayout = vk::ImageLayout::eUndefined,
-                .newLayout = vk::ImageLayout::eGeneral,
-                .subresourceRange =
-                    {
-                        .baseMipLevel = 0,
-                        .levelCount = 1,
-                    },
-            });
-
         frame.image_view =
             vk::raii::ImageView{**device,
                                 {
@@ -223,9 +206,8 @@ void VulkanRenderer::PostprocessAndPresent(vk::Semaphore offscreen_render_finish
                 .pWaitSemaphores = TempArr<vk::Semaphore>{offscreen_render_finished_semaphore,
                                                           *frame.extras.render_start_semaphore},
                 .pWaitDstStageMask =
-                    TempArr<vk::PipelineStageFlags>{
-                        vk::PipelineStageFlagBits::eFragmentShader,
-                        vk::PipelineStageFlagBits::eColorAttachmentOutput},
+                    TempArr<vk::PipelineStageFlags>{vk::PipelineStageFlagBits::eFragmentShader,
+                                                    vk::PipelineStageFlagBits::eTopOfPipe},
                 .commandBufferCount = 1,
                 .pCommandBuffers = TempArr<vk::CommandBuffer>{*frame.command_buffer},
                 .signalSemaphoreCount = 1,

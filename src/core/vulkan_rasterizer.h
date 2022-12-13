@@ -14,6 +14,7 @@
 namespace Renderer {
 
 class VulkanGraphicsPipeline;
+class VulkanImage;
 class VulkanImmUploadBuffer;
 class VulkanTexture;
 
@@ -39,7 +40,12 @@ private:
     UniformBufferObject GetUniformBufferObject() const;
     glm::mat4 GetPushConstant() const;
 
+    void CreateDepthResources();
     void CreateFramebuffers();
+
+    vk::Format depth_format{};
+    std::unique_ptr<VulkanImage> depth_image{};
+    vk::raii::ImageView depth_image_view = nullptr;
 
     std::unique_ptr<VulkanImmUploadBuffer> vertex_buffer{};
     std::unique_ptr<VulkanImmUploadBuffer> index_buffer{};

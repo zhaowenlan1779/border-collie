@@ -9,4 +9,5 @@ target_compile_definitions(glm INTERFACE -DGLM_FORCE_RADIANS -DGLM_FORCE_DEPTH_Z
 
 add_subdirectory(spdlog)
 add_subdirectory(stb)
+add_subdirectory(tinygltf)
 add_subdirectory(VulkanMemoryAllocator)
