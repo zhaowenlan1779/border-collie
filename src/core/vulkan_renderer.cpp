@@ -125,8 +125,6 @@ void VulkanRenderer::Init(vk::SurfaceKHR surface, const vk::Extent2D& actual_ext
 }
 
 void VulkanRenderer::CreateRenderTargets() {
-    Helpers::OneTimeCommandContext context{*device};
-
     const auto& info = GetOffscreenImageInfo();
     for (auto& frame_in_flight : pp_frames->frames_in_flight) {
         auto& frame = frame_in_flight.extras;
@@ -174,7 +172,6 @@ void VulkanRenderer::CreateRenderTargets() {
 
 void VulkanRenderer::PostprocessAndPresent(vk::Semaphore offscreen_render_finished_semaphore) {
     const auto& frame = pp_frames->AcquireNextFrame();
-    const auto& cmd = frame.command_buffer;
 
     const auto& framebuffer = swap_chain->AcquireImage(*frame.extras.render_start_semaphore);
     if (!framebuffer.has_value()) {
@@ -183,6 +180,7 @@ void VulkanRenderer::PostprocessAndPresent(vk::Semaphore offscreen_render_finish
 
     pp_frames->BeginFrame();
 
+    const auto& cmd = frame.command_buffer;
     pp_pipeline->BeginRenderPass(cmd, {
                                           .framebuffer = *framebuffer->get(),
                                           .renderArea =
@@ -194,7 +192,7 @@ void VulkanRenderer::PostprocessAndPresent(vk::Semaphore offscreen_render_finish
     cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *pp_pipeline->pipeline_layout, 0,
                            pp_frames->GetDescriptorSets(), {});
     cmd.draw(3, 1, 0, 0);
-    cmd.endRenderPass();
+    pp_pipeline->EndRenderPass(cmd);
 
     pp_frames->EndFrame();
 

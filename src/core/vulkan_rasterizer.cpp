@@ -16,6 +16,10 @@
 #include "core/vulkan/vulkan_texture.h"
 #include "core/vulkan_rasterizer.h"
 
+#include <filesystem>
+#include <fstream>
+#include <spdlog/spdlog.h>
+
 namespace Renderer {
 
 VulkanRasterizer::VulkanRasterizer(bool enable_validation_layers,
@@ -341,10 +345,11 @@ void VulkanRasterizer::DrawFrame() {
     device->allocator->CleanupStagingBuffers();
 
     const auto& frame = frames->AcquireNextFrame();
-    const auto& cmd = frame.command_buffer;
     frame.extras.uniform->Update(GetUniformBufferObject());
 
     frames->BeginFrame();
+
+    const auto& cmd = frame.command_buffer;
     frame.extras.uniform->Upload(cmd);
 
     pipeline->BeginRenderPass(cmd, {
@@ -368,7 +373,7 @@ void VulkanRasterizer::DrawFrame() {
     cmd.pushConstants<glm::mat4>(*pipeline->pipeline_layout, vk::ShaderStageFlagBits::eVertex, 0,
                                  {GetPushConstant()});
     cmd.drawIndexed(12, 1, 0, 0, 0);
-    cmd.endRenderPass();
+    pipeline->EndRenderPass(cmd);
 
     frames->EndFrame();
 

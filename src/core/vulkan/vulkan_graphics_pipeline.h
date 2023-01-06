@@ -27,6 +27,7 @@ public:
 
     void BeginRenderPass(const vk::raii::CommandBuffer& command_buffer,
                          vk::RenderPassBeginInfo render_pass_begin) const;
+    void EndRenderPass(const vk::raii::CommandBuffer& command_buffer) const;
 
     vk::raii::Pipeline pipeline = nullptr;
     vk::raii::PipelineLayout pipeline_layout = nullptr;

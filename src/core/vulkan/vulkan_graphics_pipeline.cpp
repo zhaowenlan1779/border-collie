@@ -119,4 +119,8 @@ void VulkanGraphicsPipeline::BeginRenderPass(const vk::raii::CommandBuffer& comm
     }
 }
 
+void VulkanGraphicsPipeline::EndRenderPass(const vk::raii::CommandBuffer& command_buffer) const {
+    command_buffer.endRenderPass();
+}
+
 } // namespace Renderer

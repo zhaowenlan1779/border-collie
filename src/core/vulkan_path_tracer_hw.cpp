@@ -254,16 +254,17 @@ void VulkanPathTracerHW::DrawFrame() {
     device->allocator->CleanupStagingBuffers();
 
     const auto& frame = frames->AcquireNextFrame();
-    const auto& cmd = frame.command_buffer;
     frame.extras.uniform->Update(GetUniformBufferObject());
 
     frames->BeginFrame();
-    frame.extras.uniform->Upload(cmd);
 
+    const auto& cmd = frame.command_buffer;
+    frame.extras.uniform->Upload(cmd);
     cmd.bindPipeline(vk::PipelineBindPoint::eRayTracingKHR, **pipeline);
     cmd.bindDescriptorSets(vk::PipelineBindPoint::eRayTracingKHR, *pipeline->pipeline_layout, 0,
                            frames->GetDescriptorSets(), {});
     pipeline->TraceRays(cmd, swap_chain->extent.width, swap_chain->extent.height, 1);
+
     frames->EndFrame();
 
     device->graphics_queue.submit(

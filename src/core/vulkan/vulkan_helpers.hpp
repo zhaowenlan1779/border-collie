@@ -4,6 +4,7 @@
 
 #pragma once
 
+#include <functional>
 #include <memory>
 #include <tuple>
 #include <type_traits>
@@ -17,8 +18,9 @@
 #include "core/vulkan/vulkan_device.h"
 
 namespace Renderer {
+class VulkanBuffer;
 class VulkanImage;
-}
+} // namespace Renderer
 
 namespace Renderer::Helpers {
 
@@ -64,6 +66,13 @@ struct OneTimeCommandContext {
 
     vk::raii::CommandBuffer& operator*() {
         return command_buffers[0];
+    }
+
+    vk::raii::CommandBuffer* operator->() noexcept {
+        return &command_buffers[0];
+    }
+    const vk::raii::CommandBuffer* operator->() const noexcept {
+        return &command_buffers[0];
     }
 
     const VulkanDevice& device;
@@ -119,6 +128,10 @@ struct GenericStructureChain {
 void ImageLayoutTransition(const vk::raii::CommandBuffer& command_buffer,
                            const std::unique_ptr<VulkanImage>& image,
                            vk::ImageMemoryBarrier2 params);
+
+void ReadAndUploadBuffer(const VulkanDevice& device, const VulkanBuffer& dst_buffer,
+                         vk::PipelineStageFlags2 dst_stage_mask, vk::AccessFlags2 dst_access_mask,
+                         std::function<void(void*, std::size_t)> read_func);
 
 // Attributes helpers
 
