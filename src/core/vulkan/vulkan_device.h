@@ -16,7 +16,7 @@ class VulkanAllocator;
 
 namespace Helpers {
 template <typename T>
-class GenericStructureChain;
+struct GenericStructureChain;
 }
 
 class VulkanDevice : NonCopyable {

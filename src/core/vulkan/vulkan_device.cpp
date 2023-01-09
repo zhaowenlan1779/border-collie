@@ -49,7 +49,7 @@ bool VulkanDevice::CreateDevice(
     const Helpers::GenericStructureChain<vk::PhysicalDeviceFeatures2>& features) {
 
     physical_device = std::move(physical_device_);
-    const std::string device_name{physical_device.getProperties().deviceName};
+    const std::string device_name = physical_device.getProperties().deviceName;
 
     const auto& queue_families = physical_device.getQueueFamilyProperties();
     graphics_queue_family = *std::ranges::find_if(

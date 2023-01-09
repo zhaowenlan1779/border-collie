@@ -118,7 +118,8 @@ public:
         std::map<vk::DescriptorType, u32> descriptor_type_count;
         for (const auto& set : descriptor_sets) {
             for (const auto& binding : set) {
-                descriptor_type_count[binding.type] += binding.count * frames_in_flight.size();
+                descriptor_type_count[binding.type] +=
+                    binding.count * static_cast<u32>(frames_in_flight.size());
             }
         }
         descriptor_pool = vk::raii::DescriptorPool{

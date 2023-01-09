@@ -525,7 +525,8 @@ uint128 CityHash128(const char* s, size_t len) {
                : CityHash128WithSeed(s, len, uint128(k0, k1));
 }
 
-#ifdef __SSE4_2__
+// We check for AVX because MSVC does not define __SSE4_2__
+#if defined(__SSE4_2__) || defined(__AVX__)
 #include <citycrc.h>
 #include <nmmintrin.h>
 

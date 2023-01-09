@@ -108,6 +108,10 @@ endif()
 
 message(STATUS "Target architecture: ${ARCHITECTURE}")
 
+if(MSVC)
+    add_compile_options(/arch:AVX)
+endif()
+
 # Include source code
 # ===================
 add_subdirectory(externals)

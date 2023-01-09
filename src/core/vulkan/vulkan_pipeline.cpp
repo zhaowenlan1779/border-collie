@@ -28,7 +28,7 @@ VulkanPipeline::VulkanPipeline(const VulkanDevice& device_,
     : device(device_) {
 
     for (std::size_t i = 0; i < frames_in_flight.size(); ++i) {
-        frames_in_flight[i].index = i;
+        frames_in_flight[i].index = static_cast<u32>(i);
     }
 
     // Sampler
@@ -54,7 +54,8 @@ VulkanPipeline::VulkanPipeline(const VulkanDevice& device_,
     std::map<vk::DescriptorType, u32> descriptor_type_count;
     for (const auto& set : descriptor_sets) {
         for (const auto& binding : set) {
-            descriptor_type_count[binding.type] += binding.count * frames_in_flight.size();
+            descriptor_type_count[binding.type] +=
+                binding.count * static_cast<u32>(frames_in_flight.size());
         }
     }
     descriptor_pool = vk::raii::DescriptorPool{
@@ -265,7 +266,7 @@ void VulkanPipeline::UpdateDescriptor(u32 set_idx, u32 binding_idx,
         } else if (create && binding.type == vk::DescriptorType::eUniformBuffer &&
                    binding.size != 0) { // Create
             frame.uniform_buffers.emplace_back();
-            for (u32 i = 0; i < binding.count; ++i) {
+            for (u32 j = 0; j < binding.count; ++j) {
                 frame.uniform_buffers.back().emplace_back(FrameInFlight::UniformBuffer{
                     std::make_unique<VulkanUniformBuffer>(*device.allocator, binding.size),
                     ToPipelineStages(binding.stages),
