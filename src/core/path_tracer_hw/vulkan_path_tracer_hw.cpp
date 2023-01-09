@@ -5,6 +5,7 @@
 #include <array>
 #include <glm/gtc/matrix_transform.hpp>
 #include "common/file_util.h"
+#include "core/path_tracer_hw/vulkan_path_tracer_hw.h"
 #include "core/shaders/renderer_glsl.h"
 #include "core/vulkan/vulkan_accel_structure.h"
 #include "core/vulkan/vulkan_allocator.h"
@@ -17,7 +18,6 @@
 #include "core/vulkan/vulkan_shader.h"
 #include "core/vulkan/vulkan_swapchain.h"
 #include "core/vulkan/vulkan_texture.h"
-#include "core/vulkan_path_tracer_hw.h"
 
 namespace Renderer {
 
@@ -195,19 +195,20 @@ void VulkanPathTracerHW::Init(vk::SurfaceKHR surface, const vk::Extent2D& actual
             .pStages = TempArr<vk::PipelineShaderStageCreateInfo>{{
                 {
                     .stage = vk::ShaderStageFlagBits::eRaygenKHR,
-                    .module = *VulkanShader{**device, u8"core/shaders/raytracing_hw/raytrace.rgen"},
+                    .module =
+                        *VulkanShader{**device, u8"core/path_tracer_hw/shaders/raytrace.rgen"},
                     .pName = "main",
                 },
                 {
                     .stage = vk::ShaderStageFlagBits::eMissKHR,
                     .module =
-                        *VulkanShader{**device, u8"core/shaders/raytracing_hw/raytrace.rmiss"},
+                        *VulkanShader{**device, u8"core/path_tracer_hw/shaders/raytrace.rmiss"},
                     .pName = "main",
                 },
                 {
                     .stage = vk::ShaderStageFlagBits::eClosestHitKHR,
                     .module =
-                        *VulkanShader{**device, u8"core/shaders/raytracing_hw/raytrace.rchit"},
+                        *VulkanShader{**device, u8"core/path_tracer_hw/shaders/raytrace.rchit"},
                     .pName = "main",
                 },
             }},

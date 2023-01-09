@@ -1,5 +1,6 @@
 add_library(common STATIC
     alignment.h
+    assert.h
     common_types.h
     file_util.cpp
     file_util.h

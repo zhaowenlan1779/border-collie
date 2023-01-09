@@ -6,6 +6,7 @@
 #include <chrono>
 #include <glm/gtc/matrix_transform.hpp>
 #include "common/file_util.h"
+#include "core/rasterizer/vulkan_rasterizer.h"
 #include "core/shaders/renderer_glsl.h"
 #include "core/vulkan/vulkan_allocator.h"
 #include "core/vulkan/vulkan_buffer.h"
@@ -16,7 +17,6 @@
 #include "core/vulkan/vulkan_shader.h"
 #include "core/vulkan/vulkan_swapchain.h"
 #include "core/vulkan/vulkan_texture.h"
-#include "core/vulkan_rasterizer.h"
 
 namespace Renderer {
 
@@ -262,12 +262,12 @@ void VulkanRasterizer::Init(vk::SurfaceKHR surface, const vk::Extent2D& actual_e
             .pStages = TempArr<vk::PipelineShaderStageCreateInfo>{{
                 {
                     .stage = vk::ShaderStageFlagBits::eVertex,
-                    .module = *VulkanShader{**device, u8"core/shaders/test.vert"},
+                    .module = *VulkanShader{**device, u8"core/rasterizer/shaders/test.vert"},
                     .pName = "main",
                 },
                 {
                     .stage = vk::ShaderStageFlagBits::eFragment,
-                    .module = *VulkanShader{**device, u8"core/shaders/test.frag"},
+                    .module = *VulkanShader{**device, u8"core/rasterizer/shaders/test.frag"},
                     .pName = "main",
                 },
             }},

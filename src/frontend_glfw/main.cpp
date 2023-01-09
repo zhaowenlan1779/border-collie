@@ -14,8 +14,8 @@
 #include "common/common_types.h"
 #include "common/log.h"
 #include "common/scope_exit.h"
-#include "core/vulkan_path_tracer_hw.h"
-#include "core/vulkan_rasterizer.h"
+#include "core/path_tracer_hw/vulkan_path_tracer_hw.h"
+#include "core/rasterizer/vulkan_rasterizer.h"
 
 bool g_should_render = true;
 

@@ -2,7 +2,7 @@
 #extension GL_GOOGLE_include_directive : enable
 #extension GL_EXT_ray_tracing : require
 
-#include "core/shaders/raytracing_hw/ray_common.glsl"
+#include "core/path_tracer_hw/shaders/ray_common.glsl"
 #include "core/shaders/renderer_glsl.h"
 
 layout(set = 0, binding = 0) uniform accelerationStructureEXT topLevelAS;

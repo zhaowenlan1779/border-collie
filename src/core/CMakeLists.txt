@@ -1,4 +1,16 @@
 add_library(core STATIC
+    gltf/gltf.h
+    gltf/json_helpers.hpp
+    gltf/simdjson.h
+    path_tracer_hw/vulkan_path_tracer_hw.cpp
+    path_tracer_hw/vulkan_path_tracer_hw.h
+    rasterizer/vulkan_rasterizer.cpp
+    rasterizer/vulkan_rasterizer.h
+    scene.cpp
+    scene.h
+    shaders/renderer_glsl.h
+    shaders/scene_glsl.h
+    vulkan/host_glsl_shared.h
     vulkan/vulkan_accel_structure.cpp
     vulkan/vulkan_accel_structure.h
     vulkan/vulkan_allocator.cpp
@@ -24,22 +36,20 @@ add_library(core STATIC
     vulkan/vulkan_swapchain.h
     vulkan/vulkan_texture.cpp
     vulkan/vulkan_texture.h
-    vulkan_path_tracer_hw.cpp
-    vulkan_path_tracer_hw.h
-    vulkan_rasterizer.cpp
-    vulkan_rasterizer.h
     vulkan_renderer.cpp
     vulkan_renderer.h
 )
 target_shaders(core
+    path_tracer_hw/shaders/raytrace.rchit
+    path_tracer_hw/shaders/raytrace.rgen
+    path_tracer_hw/shaders/raytrace.rmiss
+    rasterizer/shaders/rasterizer.frag
+    rasterizer/shaders/rasterizer.vert
+    rasterizer/shaders/test.frag
+    rasterizer/shaders/test.vert
     shaders/postprocessing.frag
     shaders/postprocessing.vert
-    shaders/raytracing_hw/raytrace.rchit
-    shaders/raytracing_hw/raytrace.rgen
-    shaders/raytracing_hw/raytrace.rmiss
-    shaders/test.frag
-    shaders/test.vert
 )
 
 target_link_libraries(core PUBLIC common boost glm::glm Vulkan::Vulkan VulkanMemoryAllocator)
-target_link_libraries(core PRIVATE spdlog stb_image cityhash tinygltf)
+target_link_libraries(core PRIVATE spdlog stb_image cityhash simdjson)
