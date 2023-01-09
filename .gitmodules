@@ -16,3 +16,6 @@
 [submodule "tinygltf"]
 	path = externals/tinygltf
 	url = git@github.com:syoyo/tinygltf.git
+[submodule "simdjson"]
+	path = externals/simdjson
+	url = git@github.com:simdjson/simdjson.git
