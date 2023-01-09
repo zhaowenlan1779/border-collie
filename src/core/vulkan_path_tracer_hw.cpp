@@ -3,8 +3,9 @@
 // Refer to the license.txt file included.
 
 #include <array>
-#include <chrono>
 #include <glm/gtc/matrix_transform.hpp>
+#include "common/file_util.h"
+#include "core/shaders/renderer_glsl.h"
 #include "core/vulkan/vulkan_accel_structure.h"
 #include "core/vulkan/vulkan_allocator.h"
 #include "core/vulkan/vulkan_buffer.h"
@@ -74,11 +75,6 @@ struct Vertex {
     glm::vec2 texCoord;
 };
 
-struct VulkanPathTracerHW::UniformBufferObject {
-    glm::mat4 view_inverse;
-    glm::mat4 proj_inverse;
-};
-
 void VulkanPathTracerHW::Init(vk::SurfaceKHR surface, const vk::Extent2D& actual_extent) {
     VulkanRenderer::Init(surface, actual_extent);
 
@@ -108,7 +104,8 @@ void VulkanPathTracerHW::Init(vk::SurfaceKHR surface, const vk::Extent2D& actual
                      .dst_access_mask = vk::AccessFlagBits2::eShaderRead,
                  });
 
-    texture = std::make_unique<VulkanTexture>(*device, u8"textures/texture.jpg");
+    texture = std::make_unique<VulkanTexture>(*device,
+                                              Common::ReadFileContents(u8"textures/texture.jpg"));
 
     // Build acceleration structures
     // clang-format off
@@ -155,7 +152,7 @@ void VulkanPathTracerHW::Init(vk::SurfaceKHR surface, const vk::Extent2D& actual
     frames = std::make_unique<VulkanFramesInFlight<Frame, 2>>(*device);
     for (auto& frame_in_flight : frames->frames_in_flight) {
         frame_in_flight.extras.uniform =
-            std::make_unique<VulkanUniformBufferObject<UniformBufferObject>>(
+            std::make_unique<VulkanUniformBufferObject<GLSL::PathTracerUBOBlock>>(
                 *device->allocator, vk::PipelineStageFlagBits2::eRayTracingShaderKHR);
     }
     frames->CreateDescriptors({{
@@ -230,24 +227,18 @@ void VulkanPathTracerHW::Init(vk::SurfaceKHR surface, const vk::Extent2D& actual
         }));
 }
 
-VulkanPathTracerHW::UniformBufferObject VulkanPathTracerHW::GetUniformBufferObject() const {
-    static auto startTime = std::chrono::high_resolution_clock::now();
-
-    const auto currentTime = std::chrono::high_resolution_clock::now();
-    const float time =
-        std::chrono::duration<float, std::chrono::seconds::period>(currentTime - startTime).count();
-
+GLSL::PathTracerUBOBlock VulkanPathTracerHW::GetUniformBufferObject() const {
     auto proj = glm::perspective(
         glm::radians(45.0f),
         swap_chain->extent.width / static_cast<float>(swap_chain->extent.height), 0.1f, 10.0f);
     proj[1][1] *= -1;
-    return {
+    return {{
         // .model =
         //    glm::rotate(glm::mat4(1.0f), time * glm::radians(90.0f), glm::vec3(0.0f, 0.0f, 1.0f)),
         .view_inverse = glm::inverse(glm::lookAt(
             glm::vec3(2.0f, 2.0f, 2.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f))),
         .proj_inverse = glm::inverse(proj),
-    };
+    }};
 }
 
 void VulkanPathTracerHW::DrawFrame() {

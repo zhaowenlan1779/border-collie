@@ -19,6 +19,9 @@ class VulkanTexture;
 class VulkanRayTracingPipeline;
 template <typename T>
 class VulkanUniformBufferObject;
+namespace GLSL {
+struct PathTracerUBOBlock;
+}
 
 class VulkanPathTracerHW : public VulkanRenderer {
 public:
@@ -34,9 +37,7 @@ private:
     OffscreenImageInfo GetOffscreenImageInfo() const override;
     std::unique_ptr<VulkanDevice> CreateDevice(vk::SurfaceKHR surface,
                                                const vk::Extent2D& actual_extent) const override;
-
-    struct UniformBufferObject;
-    UniformBufferObject GetUniformBufferObject() const;
+    GLSL::PathTracerUBOBlock GetUniformBufferObject() const;
 
     std::unique_ptr<VulkanImmUploadBuffer> vertex_buffer{};
     std::unique_ptr<VulkanImmUploadBuffer> index_buffer{};
@@ -45,7 +46,7 @@ private:
     std::unique_ptr<VulkanTexture> texture{};
 
     struct Frame {
-        std::unique_ptr<VulkanUniformBufferObject<UniformBufferObject>> uniform{};
+        std::unique_ptr<VulkanUniformBufferObject<GLSL::PathTracerUBOBlock>> uniform{};
     };
     std::unique_ptr<VulkanFramesInFlight<Frame, 2>> frames;
     std::unique_ptr<VulkanRayTracingPipeline> pipeline;

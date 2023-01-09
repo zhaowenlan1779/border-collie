@@ -41,15 +41,10 @@ public:
 
         pixels = reinterpret_cast<stbi_uc*>(std::malloc(size));
     }
-    explicit StbImage(const std::filesystem::path& path) {
-        const auto& contents = Common::ReadFileContents(path);
-        if (contents.empty()) {
-            throw std::runtime_error("Failed to read file");
-        }
-
+    explicit StbImage(std::vector<u8> contents) {
         int channels_in_file;
-        pixels = stbi_load_from_memory(contents.data(), contents.size(), &width, &height,
-                                       &channels_in_file, STBI_rgb_alpha);
+        pixels = stbi_load_from_memory(contents.data(), static_cast<int>(contents.size()), &width,
+                                       &height, &channels_in_file, STBI_rgb_alpha);
         if (!pixels) {
             throw std::runtime_error("Failed to load image");
         }
@@ -71,13 +66,14 @@ static void StbiWriteCallback(void* context, void* data, int size) {
     out_file.write(reinterpret_cast<const char*>(data), size);
 }
 
-VulkanTexture::VulkanTexture(VulkanDevice& device, const std::filesystem::path& path) {
+VulkanTexture::VulkanTexture(VulkanDevice& device, std::vector<u8> file_data, bool mipmaps) {
     // Load image file
-    auto image_data = std::make_unique<StbImage>(path);
+    auto image_data = std::make_unique<StbImage>(std::move(file_data));
     width = static_cast<u32>(image_data->width);
     height = static_cast<u32>(image_data->height);
 
-    const u32 mip_levels = static_cast<u32>(std::floor(std::log2(std::max(width, height)))) + 1;
+    const u32 mip_levels =
+        mipmaps ? static_cast<u32>(std::floor(std::log2(std::max(width, height)))) + 1 : 1;
 
     // Create image & image_view
     image = std::make_unique<VulkanImage>(
@@ -116,44 +112,46 @@ VulkanTexture::VulkanTexture(VulkanDevice& device, const std::filesystem::path& 
                                      }};
 
     // Determine & create mipmaps folder
-    const auto mipmaps_folder = path.parent_path() / u8"mipmaps";
+    const std::filesystem::path mipmaps_folder = u8"mipmaps";
     std::filesystem::create_directory(mipmaps_folder);
 
-    // Hash the image to mark mipmap version
-    const auto& [hash_h, hash_l] =
-        CityHashCrc128(reinterpret_cast<const char*>(image_data->pixels), image_data->size);
+    // Hash the image to mark mipmap version, if necessary
+    std::string hash;
+    if (mip_levels > 1) {
+        const auto& [hash_h, hash_l] =
+            CityHashCrc128(reinterpret_cast<const char*>(image_data->pixels), image_data->size);
+        hash = fmt::format("{:08x}{:08x}", hash_h, hash_l);
+    }
 
     u32 mip_width = width, mip_height = height;
     for (u32 i = 0; i < mip_levels; ++i) {
         if (i != 0) {
             // Try load mipmap. If not successful, resize it on the fly and save it.
             // Determine mipmap path
-            const auto suffix = fmt::format(".{:08x}{:08x}.{}.png", hash_h, hash_l, i);
+            const auto mipmap_name = fmt::format("{}.{}.png", hash, i);
             // Rough, but everything is ASCII so probably fine
-            const std::u8string suffix_u8{
-                reinterpret_cast<const char8_t*>(suffix.data()),
-                reinterpret_cast<const char8_t*>(suffix.data() + suffix.size())};
-            const auto mipmap_path = (mipmaps_folder / path.filename()).concat(suffix_u8);
+            const std::u8string mipmap_name_u8{
+                reinterpret_cast<const char8_t*>(mipmap_name.data()),
+                reinterpret_cast<const char8_t*>(mipmap_name.data() + mipmap_name.size())};
+            const auto mipmap_path = mipmaps_folder / mipmap_name_u8;
 
             const auto last_image = std::move(image_data);
             image_data.reset();
             if (std::filesystem::exists(mipmap_path)) {
                 try {
-                    image_data = std::make_unique<StbImage>(mipmap_path);
+                    image_data = std::make_unique<StbImage>(Common::ReadFileContents(mipmap_path));
                 } catch (...) {
-                    SPDLOG_WARN("Could not load {} mip level {} from file, regenerating.",
-                                path.string(), i);
+                    SPDLOG_WARN("Could not load {} mip level {} from file, regenerating.", hash, i);
                     image_data.reset();
                 }
                 if (static_cast<u32>(image_data->width) != mip_width ||
                     static_cast<u32>(image_data->height) != mip_height) {
 
-                    SPDLOG_WARN("{} mip level {} has incorrect dimensions, regenerating.",
-                                path.string(), i);
+                    SPDLOG_WARN("{} mip level {} has incorrect dimensions, regenerating.", hash, i);
                     image_data.reset();
                 }
             } else {
-                SPDLOG_WARN("{} mip level {} does not exist, generating.", path.string(), i);
+                SPDLOG_WARN("{} mip level {} does not exist, generating.", hash, i);
             }
 
             if (!image_data) { // Resize on the fly and save
@@ -167,7 +165,7 @@ VulkanTexture::VulkanTexture(VulkanDevice& device, const std::filesystem::path& 
                 std::ofstream out_file{mipmap_path, std::ios::binary};
                 if (!stbi_write_png_to_func(&StbiWriteCallback, &out_file, image_data->width,
                                             image_data->height, 4, image_data->pixels, 0)) {
-                    SPDLOG_WARN("Failed to write {} mip level {} to file", path.string(), i);
+                    SPDLOG_WARN("Failed to write {} mip level {} to file", hash, i);
                 }
             }
         }

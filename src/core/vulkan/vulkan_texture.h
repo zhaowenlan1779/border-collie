@@ -40,7 +40,7 @@ private:
 
 class VulkanTexture : NonCopyable {
 public:
-    explicit VulkanTexture(VulkanDevice& device, const std::filesystem::path& path);
+    explicit VulkanTexture(VulkanDevice& device, std::vector<u8> file_data, bool mipmaps = true);
     ~VulkanTexture();
 
     u32 width{};

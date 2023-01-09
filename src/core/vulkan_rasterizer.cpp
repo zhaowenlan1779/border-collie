@@ -5,6 +5,8 @@
 #include <array>
 #include <chrono>
 #include <glm/gtc/matrix_transform.hpp>
+#include "common/file_util.h"
+#include "core/shaders/renderer_glsl.h"
 #include "core/vulkan/vulkan_allocator.h"
 #include "core/vulkan/vulkan_buffer.h"
 #include "core/vulkan/vulkan_context.h"
@@ -15,10 +17,6 @@
 #include "core/vulkan/vulkan_swapchain.h"
 #include "core/vulkan/vulkan_texture.h"
 #include "core/vulkan_rasterizer.h"
-
-#include <filesystem>
-#include <fstream>
-#include <spdlog/spdlog.h>
 
 namespace Renderer {
 
@@ -123,12 +121,6 @@ struct Vertex {
     glm::vec2 texCoord;
 };
 
-struct VulkanRasterizer::UniformBufferObject {
-    glm::mat4 model;
-    glm::mat4 view;
-    glm::mat4 proj;
-};
-
 void VulkanRasterizer::Init(vk::SurfaceKHR surface, const vk::Extent2D& actual_extent) {
     VulkanRenderer::Init(surface, actual_extent);
 
@@ -161,12 +153,13 @@ void VulkanRasterizer::Init(vk::SurfaceKHR surface, const vk::Extent2D& actual_e
                      .dst_access_mask = vk::AccessFlagBits2::eIndexRead,
                  });
 
-    texture = std::make_unique<VulkanTexture>(*device, u8"textures/texture.jpg");
+    texture = std::make_unique<VulkanTexture>(*device,
+                                              Common::ReadFileContents(u8"textures/texture.jpg"));
 
     frames = std::make_unique<VulkanFramesInFlight<Frame, 2>>(*device);
     for (auto& frame_in_flight : frames->frames_in_flight) {
         frame_in_flight.extras.uniform =
-            std::make_unique<VulkanUniformBufferObject<UniformBufferObject>>(
+            std::make_unique<VulkanUniformBufferObject<GLSL::RasterizerUBOBlock>>(
                 *device->allocator, vk::PipelineStageFlagBits2::eVertexShader);
     }
     frames->CreateDescriptors({{
@@ -303,7 +296,7 @@ void VulkanRasterizer::Init(vk::SurfaceKHR surface, const vk::Extent2D& actual_e
     CreateFramebuffers();
 }
 
-VulkanRasterizer::UniformBufferObject VulkanRasterizer::GetUniformBufferObject() const {
+GLSL::RasterizerUBOBlock VulkanRasterizer::GetUniformBufferObject() const {
     static auto startTime = std::chrono::high_resolution_clock::now();
 
     const auto currentTime = std::chrono::high_resolution_clock::now();
@@ -314,13 +307,13 @@ VulkanRasterizer::UniformBufferObject VulkanRasterizer::GetUniformBufferObject()
         glm::radians(45.0f),
         swap_chain->extent.width / static_cast<float>(swap_chain->extent.height), 0.1f, 10.0f);
     proj[1][1] *= -1;
-    return {
+    return {{
         .model =
             glm::rotate(glm::mat4(1.0f), time * glm::radians(90.0f), glm::vec3(0.0f, 0.0f, 1.0f)),
         .view = glm::lookAt(glm::vec3(2.0f, 2.0f, 2.0f), glm::vec3(0.0f, 0.0f, 0.0f),
                             glm::vec3(0.0f, 0.0f, 1.0f)),
         .proj = proj,
-    };
+    }};
 }
 
 glm::mat4 VulkanRasterizer::GetPushConstant() const {

@@ -1,11 +1,12 @@
 #version 450
+#extension GL_GOOGLE_include_directive : enable
 
-layout(binding = 0) uniform UniformBufferObject {
-    mat4 model;
-    mat4 view;
-    mat4 proj;
+#include "core/shaders/renderer_glsl.h"
+
+layout(binding = 0) uniform RasterizerUBOBlock {
+    RasterizerUBO u;
 }
-ubo;
+uni;
 
 layout(push_constant) uniform constants {
     mat4 transformation;

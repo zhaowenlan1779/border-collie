@@ -21,6 +21,10 @@ class VulkanTexture;
 template <typename T>
 class VulkanUniformBufferObject;
 
+namespace GLSL {
+struct RasterizerUBOBlock;
+}
+
 class VulkanRasterizer final : public VulkanRenderer {
 public:
     explicit VulkanRasterizer(bool enable_validation_layers,
@@ -35,9 +39,7 @@ private:
     OffscreenImageInfo GetOffscreenImageInfo() const override;
     std::unique_ptr<VulkanDevice> CreateDevice(vk::SurfaceKHR surface,
                                                const vk::Extent2D& actual_extent) const override;
-
-    struct UniformBufferObject;
-    UniformBufferObject GetUniformBufferObject() const;
+    GLSL::RasterizerUBOBlock GetUniformBufferObject() const;
     glm::mat4 GetPushConstant() const;
 
     void CreateDepthResources();
@@ -53,7 +55,7 @@ private:
 
     vk::raii::RenderPass render_pass = nullptr;
     struct Frame {
-        std::unique_ptr<VulkanUniformBufferObject<UniformBufferObject>> uniform{};
+        std::unique_ptr<VulkanUniformBufferObject<GLSL::RasterizerUBOBlock>> uniform{};
         vk::raii::Framebuffer framebuffer = nullptr;
     };
     std::unique_ptr<VulkanFramesInFlight<Frame, 2>> frames;
