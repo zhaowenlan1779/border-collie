@@ -16,3 +16,6 @@
 [submodule "simdjson"]
 	path = externals/simdjson
 	url = git@github.com:simdjson/simdjson.git
+[submodule "externals/base64"]
+	path = externals/base64
+	url = git@github.com:aklomp/base64.git
