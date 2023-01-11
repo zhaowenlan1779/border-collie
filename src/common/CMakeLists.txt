@@ -6,9 +6,11 @@ add_library(common STATIC
     file_util.h
     log.cpp
     log.h
+    pfr_helper.hpp
     ranges.h
     scope_exit.h
     temp_ptr.h
 )
 
+target_link_libraries(common PUBLIC boost)
 target_link_libraries(common PRIVATE spdlog)

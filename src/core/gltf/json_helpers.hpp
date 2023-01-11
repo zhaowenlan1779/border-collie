@@ -10,6 +10,8 @@
 #include <type_traits>
 #include <vector>
 #include <boost/pfr.hpp>
+#include <glm/glm.hpp>
+#include <spdlog/spdlog.h>
 #include "common/common_types.h"
 #include "core/gltf/simdjson.h"
 

@@ -1,5 +1,8 @@
 # Definitions for all external bundled libraries
 
+set(BASE64_BUILD_CLI OFF)
+add_subdirectory(base64)
+
 add_subdirectory(boost)
 add_subdirectory(cityhash)
 add_subdirectory(glfw)

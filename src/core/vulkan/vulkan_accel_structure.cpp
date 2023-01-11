@@ -65,14 +65,14 @@ VulkanAccelStructure::VulkanAccelStructure(
 
     instances_buffer = std::make_unique<VulkanImmUploadBuffer>(
         device,
-        VulkanImmUploadBufferCreateInfo{
-            .data = reinterpret_cast<const u8*>(instance_geometries.data()),
+        VulkanBufferCreateInfo{
             .size = instance_geometries.size() * sizeof(vk::AccelerationStructureInstanceKHR),
             .usage = vk::BufferUsageFlagBits::eAccelerationStructureBuildInputReadOnlyKHR |
                      vk::BufferUsageFlagBits::eShaderDeviceAddress,
             .dst_stage_mask = vk::PipelineStageFlagBits2::eAccelerationStructureBuildKHR,
             .dst_access_mask = vk::AccessFlagBits2::eShaderRead,
-        });
+        },
+        reinterpret_cast<const u8*>(instance_geometries.data()));
     Init(
         vk::AccelerationStructureGeometryKHR{
             .geometryType = vk::GeometryTypeKHR::eInstances,

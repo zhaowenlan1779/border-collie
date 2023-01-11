@@ -12,7 +12,7 @@ function(target_shaders target)
 
         set(compiled_shaders ${compiled_shaders} ${output_file})
         set(compiled_shaders ${compiled_shaders} PARENT_SCOPE)
-        message("Output spv shader: ${output_file}")
+        message(STATUS "Output spv shader: ${output_file}")
         set_source_files_properties(${shader} PROPERTIES HEADER_FILE_ONLY TRUE)
         add_custom_command(
             OUTPUT ${output_file}

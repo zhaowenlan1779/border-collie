@@ -41,11 +41,10 @@ VulkanRayTracingPipeline::VulkanRayTracingPipeline(const VulkanDevice& device,
         }
     }
 
-    const auto& properties =
-        device.physical_device
-            .getProperties2<vk::PhysicalDeviceProperties2,
-                            vk::PhysicalDeviceRayTracingPipelinePropertiesKHR>()
-            .get<vk::PhysicalDeviceRayTracingPipelinePropertiesKHR>();
+    const auto& properties2 =
+        device.physical_device.getProperties2<vk::PhysicalDeviceProperties2,
+                                              vk::PhysicalDeviceRayTracingPipelinePropertiesKHR>();
+    const auto& properties = properties2.get<vk::PhysicalDeviceRayTracingPipelinePropertiesKHR>();
 
     const vk::DeviceSize handle_size_aligned =
         Common::AlignUp(properties.shaderGroupHandleSize, properties.shaderGroupHandleAlignment);

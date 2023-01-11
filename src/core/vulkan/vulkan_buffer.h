@@ -5,6 +5,7 @@
 #pragma once
 
 #include <cstring>
+#include <functional>
 #include <memory>
 #include <vk_mem_alloc.h>
 #include <vulkan/vulkan.hpp>
@@ -51,9 +52,8 @@ public:
 };
 
 // Too many params, let's do it the Vulkan style
-struct VulkanImmUploadBufferCreateInfo {
-    const u8* data;
-    std::size_t size;
+struct VulkanBufferCreateInfo {
+    std::size_t size{};
     vk::BufferUsageFlags usage{};
     vk::PipelineStageFlags2 dst_stage_mask{};
     vk::AccessFlags2 dst_access_mask{};
@@ -64,9 +64,20 @@ struct VulkanImmUploadBufferCreateInfo {
  */
 class VulkanImmUploadBuffer : public VulkanBuffer {
 public:
-    explicit VulkanImmUploadBuffer(VulkanDevice& device,
-                                   const VulkanImmUploadBufferCreateInfo& create_info);
+    explicit VulkanImmUploadBuffer(VulkanDevice& device, const VulkanBufferCreateInfo& create_info,
+                                   std::function<void(void*, std::size_t)> read_func);
+    explicit VulkanImmUploadBuffer(VulkanDevice& device, const VulkanBufferCreateInfo& create_info,
+                                   const u8* data);
     ~VulkanImmUploadBuffer();
+};
+
+class VulkanZeroedBuffer : public VulkanBuffer {
+public:
+    explicit VulkanZeroedBuffer(VulkanDevice& device, const VulkanBufferCreateInfo& create_info);
+    ~VulkanZeroedBuffer();
+
+private:
+    vk::raii::CommandBuffer command_buffer = nullptr;
 };
 
 class VulkanUniformBuffer : NonCopyable {

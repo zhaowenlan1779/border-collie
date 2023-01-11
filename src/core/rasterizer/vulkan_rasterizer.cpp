@@ -43,6 +43,7 @@ std::unique_ptr<VulkanDevice> VulkanRasterizer::CreateDevice(
         context->instance, surface,
         std::array{
             VK_KHR_SWAPCHAIN_EXTENSION_NAME,
+            VK_EXT_VERTEX_INPUT_DYNAMIC_STATE_EXTENSION_NAME,
         },
         Helpers::GenericStructureChain{vk::PhysicalDeviceFeatures2{
                                            .features =
@@ -57,6 +58,9 @@ std::unique_ptr<VulkanDevice> VulkanRasterizer::CreateDevice(
                                        vk::PhysicalDeviceVulkan13Features{
                                            .pipelineCreationCacheControl = VK_TRUE,
                                            .synchronization2 = VK_TRUE,
+                                       },
+                                       vk::PhysicalDeviceVertexInputDynamicStateFeaturesEXT{
+                                           .vertexInputDynamicState = VK_TRUE,
                                        }});
 }
 
@@ -135,23 +139,25 @@ void VulkanRasterizer::Init(vk::SurfaceKHR surface, const vk::Extent2D& actual_e
                                           {{0.5f, 0.5f, -0.5f}, {0.0f, 0.0f, 1.0f}, {1.0f, 1.0f}},
                                           {{-0.5f, 0.5f, -0.5f}, {1.0f, 1.0f, 1.0f}, {0.0f, 1.0f}}};
     vertex_buffer = std::make_unique<VulkanImmUploadBuffer>(
-        *device, VulkanImmUploadBufferCreateInfo{
-                     .data = reinterpret_cast<const u8*>(vertices.data()),
-                     .size = vertices.size() * sizeof(vertices[0]),
-                     .usage = vk::BufferUsageFlagBits::eVertexBuffer,
-                     .dst_stage_mask = vk::PipelineStageFlagBits2::eVertexAttributeInput,
-                     .dst_access_mask = vk::AccessFlagBits2::eVertexAttributeRead,
-                 });
+        *device,
+        VulkanBufferCreateInfo{
+            .size = vertices.size() * sizeof(vertices[0]),
+            .usage = vk::BufferUsageFlagBits::eVertexBuffer,
+            .dst_stage_mask = vk::PipelineStageFlagBits2::eVertexAttributeInput,
+            .dst_access_mask = vk::AccessFlagBits2::eVertexAttributeRead,
+        },
+        reinterpret_cast<const u8*>(vertices.data()));
 
     const std::vector<u16> indices = {0, 1, 2, 2, 3, 0, 4, 5, 6, 6, 7, 4};
     index_buffer = std::make_unique<VulkanImmUploadBuffer>(
-        *device, VulkanImmUploadBufferCreateInfo{
-                     .data = reinterpret_cast<const u8*>(indices.data()),
-                     .size = indices.size() * sizeof(indices[0]),
-                     .usage = vk::BufferUsageFlagBits::eIndexBuffer,
-                     .dst_stage_mask = vk::PipelineStageFlagBits2::eIndexInput,
-                     .dst_access_mask = vk::AccessFlagBits2::eIndexRead,
-                 });
+        *device,
+        VulkanBufferCreateInfo{
+            .size = indices.size() * sizeof(indices[0]),
+            .usage = vk::BufferUsageFlagBits::eIndexBuffer,
+            .dst_stage_mask = vk::PipelineStageFlagBits2::eIndexInput,
+            .dst_access_mask = vk::AccessFlagBits2::eIndexRead,
+        },
+        reinterpret_cast<const u8*>(indices.data()));
 
     texture = std::make_unique<VulkanTexture>(*device,
                                               Common::ReadFileContents(u8"textures/texture.jpg"));

@@ -84,25 +84,27 @@ void VulkanPathTracerHW::Init(vk::SurfaceKHR surface, const vk::Extent2D& actual
                                           {{0.5f, 0.5f, 0.0f}, {0.0f, 0.0f, 1.0f}, {0.0f, 1.0f}},
                                           {{-0.5f, 0.5f, 0.0f}, {1.0f, 1.0f, 1.0f}, {1.0f, 1.0f}}};
     vertex_buffer = std::make_unique<VulkanImmUploadBuffer>(
-        *device, VulkanImmUploadBufferCreateInfo{
-                     .data = reinterpret_cast<const u8*>(vertices.data()),
-                     .size = vertices.size() * sizeof(Vertex),
-                     .usage = vk::BufferUsageFlagBits::eAccelerationStructureBuildInputReadOnlyKHR |
-                              vk::BufferUsageFlagBits::eShaderDeviceAddress,
-                     .dst_stage_mask = vk::PipelineStageFlagBits2::eAccelerationStructureBuildKHR,
-                     .dst_access_mask = vk::AccessFlagBits2::eShaderRead,
-                 });
+        *device,
+        VulkanBufferCreateInfo{
+            .size = vertices.size() * sizeof(Vertex),
+            .usage = vk::BufferUsageFlagBits::eAccelerationStructureBuildInputReadOnlyKHR |
+                     vk::BufferUsageFlagBits::eShaderDeviceAddress,
+            .dst_stage_mask = vk::PipelineStageFlagBits2::eAccelerationStructureBuildKHR,
+            .dst_access_mask = vk::AccessFlagBits2::eShaderRead,
+        },
+        reinterpret_cast<const u8*>(vertices.data()));
 
     const std::vector<u16> indices = {0, 1, 2, 2, 3, 0};
     index_buffer = std::make_unique<VulkanImmUploadBuffer>(
-        *device, VulkanImmUploadBufferCreateInfo{
-                     .data = reinterpret_cast<const u8*>(indices.data()),
-                     .size = indices.size() * sizeof(u16),
-                     .usage = vk::BufferUsageFlagBits::eAccelerationStructureBuildInputReadOnlyKHR |
-                              vk::BufferUsageFlagBits::eShaderDeviceAddress,
-                     .dst_stage_mask = vk::PipelineStageFlagBits2::eAccelerationStructureBuildKHR,
-                     .dst_access_mask = vk::AccessFlagBits2::eShaderRead,
-                 });
+        *device,
+        VulkanBufferCreateInfo{
+            .size = indices.size() * sizeof(u16),
+            .usage = vk::BufferUsageFlagBits::eAccelerationStructureBuildInputReadOnlyKHR |
+                     vk::BufferUsageFlagBits::eShaderDeviceAddress,
+            .dst_stage_mask = vk::PipelineStageFlagBits2::eAccelerationStructureBuildKHR,
+            .dst_access_mask = vk::AccessFlagBits2::eShaderRead,
+        },
+        reinterpret_cast<const u8*>(indices.data()));
 
     texture = std::make_unique<VulkanTexture>(*device,
                                               Common::ReadFileContents(u8"textures/texture.jpg"));

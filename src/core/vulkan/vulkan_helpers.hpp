@@ -242,7 +242,7 @@ consteval Alignment CalculateAlignment(glm::vec<L, T, Q>) {
     if constexpr (L == 2) {
         return {ScalarAlignment.Alignment * 2, ScalarAlignment.Size * 2};
     } else {
-        return {ScalarAlignment.Alignment * 4, ScalarAlignment.Size * 4};
+        return {ScalarAlignment.Alignment * 4, ScalarAlignment.Size * L};
     }
 }
 
@@ -268,7 +268,14 @@ consteval Alignment CalculateAlignment(std::array<T, N>) {
 // Matrices
 template <glm::length_t C, glm::length_t R, typename T, glm::qualifier Q>
 consteval Alignment CalculateAlignment(glm::mat<C, R, T, Q>) {
+    static_assert(R == 4, "Special consideration is necessary when R is not 4");
     return CalculateAlignment(std::array<glm::vec<R, T, Q>, C>{});
+}
+
+template <std::size_t S, glm::length_t C, glm::length_t R, typename T, glm::qualifier Q>
+consteval Alignment CalculateAlignment(std::array<glm::mat<C, R, T, Q>, S>) {
+    static_assert(R == 4, "Special consideration is necessary when R is not 4");
+    return CalculateAlignment(std::array<glm::vec<R, T, Q>, S * C>{});
 }
 
 // Structures

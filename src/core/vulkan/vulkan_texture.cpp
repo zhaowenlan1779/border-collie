@@ -129,11 +129,7 @@ VulkanTexture::VulkanTexture(VulkanDevice& device, std::vector<u8> file_data, bo
             // Try load mipmap. If not successful, resize it on the fly and save it.
             // Determine mipmap path
             const auto mipmap_name = fmt::format("{}.{}.png", hash, i);
-            // Rough, but everything is ASCII so probably fine
-            const std::u8string mipmap_name_u8{
-                reinterpret_cast<const char8_t*>(mipmap_name.data()),
-                reinterpret_cast<const char8_t*>(mipmap_name.data() + mipmap_name.size())};
-            const auto mipmap_path = mipmaps_folder / mipmap_name_u8;
+            const auto mipmap_path = mipmaps_folder / std::filesystem::u8path(mipmap_name);
 
             const auto last_image = std::move(image_data);
             image_data.reset();

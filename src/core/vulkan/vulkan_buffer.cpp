@@ -52,7 +52,8 @@ VulkanStagingBuffer::VulkanStagingBuffer(const VulkanAllocator& allocator, std::
 VulkanStagingBuffer::~VulkanStagingBuffer() = default;
 
 VulkanImmUploadBuffer::VulkanImmUploadBuffer(VulkanDevice& device,
-                                             const VulkanImmUploadBufferCreateInfo& create_info)
+                                             const VulkanBufferCreateInfo& create_info,
+                                             std::function<void(void*, std::size_t)> read_func)
     : VulkanBuffer{*device.allocator,
                    {
                        .size = create_info.size,
@@ -62,18 +63,55 @@ VulkanImmUploadBuffer::VulkanImmUploadBuffer(VulkanDevice& device,
                        .usage = VMA_MEMORY_USAGE_AUTO,
                    }} {
 
-    auto handle = device.allocator->CreateStagingBuffer(size);
-    const auto& src_buffer = *handle;
+    Helpers::ReadAndUploadBuffer(device, *this, create_info.dst_stage_mask,
+                                 create_info.dst_access_mask, std::move(read_func));
+}
 
-    std::memcpy(src_buffer.allocation_info.pMappedData, create_info.data, size);
-    vmaFlushAllocation(**device.allocator, src_buffer.allocation, 0, VK_WHOLE_SIZE);
+VulkanImmUploadBuffer::VulkanImmUploadBuffer(VulkanDevice& device,
+                                             const VulkanBufferCreateInfo& create_info,
+                                             const u8* data)
+    : VulkanBuffer{*device.allocator,
+                   {
+                       .size = create_info.size,
+                       .usage = create_info.usage | vk::BufferUsageFlagBits::eTransferDst,
+                   },
+                   {
+                       .usage = VMA_MEMORY_USAGE_AUTO,
+                   }} {
 
-    // Upload
-    src_buffer.command_buffer.copyBuffer(*src_buffer, buffer,
-                                         {{
-                                             .size = size,
-                                         }});
-    src_buffer.command_buffer.pipelineBarrier2({
+    std::size_t pos = 0;
+    Helpers::ReadAndUploadBuffer(device, *this, create_info.dst_stage_mask,
+                                 create_info.dst_access_mask,
+                                 [data, &pos](void* out, std::size_t size) {
+                                     std::memcpy(out, data + pos, size);
+                                     pos += size;
+                                 });
+}
+
+VulkanImmUploadBuffer::~VulkanImmUploadBuffer() = default;
+
+VulkanZeroedBuffer::VulkanZeroedBuffer(VulkanDevice& device,
+                                       const VulkanBufferCreateInfo& create_info)
+    : VulkanBuffer{*device.allocator,
+                   {
+                       .size = Common::AlignUp(create_info.size, 4), // Ensure that it can be filled
+                       .usage = create_info.usage | vk::BufferUsageFlagBits::eTransferDst,
+                   },
+                   {
+                       .usage = VMA_MEMORY_USAGE_AUTO,
+                   }} {
+
+    vk::raii::CommandBuffers command_buffers{*device,
+                                             {
+                                                 .commandPool = *device.command_pool,
+                                                 .level = vk::CommandBufferLevel::ePrimary,
+                                                 .commandBufferCount = 1,
+                                             }};
+    command_buffer = std::move(command_buffers[0]);
+
+    command_buffer.begin({.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
+    command_buffer.fillBuffer(**this, 0, VK_WHOLE_SIZE, 0);
+    command_buffer.pipelineBarrier2({
         .bufferMemoryBarrierCount = 1,
         .pBufferMemoryBarriers = TempArr<vk::BufferMemoryBarrier2>{{
             .srcStageMask = vk::PipelineStageFlagBits2::eTransfer,
@@ -82,15 +120,19 @@ VulkanImmUploadBuffer::VulkanImmUploadBuffer(VulkanDevice& device,
             .dstAccessMask = create_info.dst_access_mask,
             .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
             .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-            .buffer = buffer,
+            .buffer = **this,
             .offset = 0,
-            .size = size,
+            .size = VK_WHOLE_SIZE,
         }},
     });
-    handle.Submit();
+    command_buffer.end();
+    device.graphics_queue.submit({{
+        .commandBufferCount = 1,
+        .pCommandBuffers = TempArr<vk::CommandBuffer>{*command_buffer},
+    }});
 }
 
-VulkanImmUploadBuffer::~VulkanImmUploadBuffer() = default;
+VulkanZeroedBuffer::~VulkanZeroedBuffer() = default;
 
 VulkanUniformBuffer::VulkanUniformBuffer(const VulkanAllocator& allocator_, std::size_t size)
     : allocator{allocator_},

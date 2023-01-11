@@ -30,45 +30,20 @@ void ImageLayoutTransition(const vk::raii::CommandBuffer& command_buffer,
 void ReadAndUploadBuffer(const VulkanDevice& device, const VulkanBuffer& dst_buffer,
                          vk::PipelineStageFlags2 dst_stage_mask, vk::AccessFlags2 dst_access_mask,
                          std::function<void(void*, std::size_t)> read_func) {
-    static constexpr std::size_t UploadBufferSize = 8 * 1024 * 1024; // 8MB
+    // TODO: Test this more
+    static constexpr std::size_t UploadBufferSize = 32 * 1024 * 1024;
 
-    struct Payload {
-        std::unique_ptr<VulkanStagingBuffer> src_buffer;
-        vk::raii::Fence upload_completed_fence = nullptr;
-    };
-    std::array<Payload, 2> payloads;
-
-    // Create payload objects
-    for (auto& payload : payloads) {
-        payload.src_buffer =
-            std::make_unique<VulkanStagingBuffer>(*device.allocator, UploadBufferSize);
-        payload.upload_completed_fence =
-            vk::raii::Fence{*device,
-                            {
-                                .flags = vk::FenceCreateFlagBits::eSignaled,
-                            }};
-    }
-
-    std::size_t current = 0;
     std::size_t bytes_remaining = dst_buffer.size;
     while (bytes_remaining > 0) {
-        auto& payload = payloads[current];
-        if (device->waitForFences({*payload.upload_completed_fence}, VK_FALSE,
-                                  std::numeric_limits<u64>::max()) != vk::Result::eSuccess) {
-
-            throw std::runtime_error("Failed to wait for fences");
-        }
-        device->resetFences({*payload.upload_completed_fence});
+        auto handle = device.allocator->CreateStagingBuffer(UploadBufferSize);
+        const auto& src_buffer = *handle;
 
         const std::size_t to_write = std::min(bytes_remaining, UploadBufferSize);
-        read_func(payload.src_buffer->allocation_info.pMappedData, to_write);
-        vmaFlushAllocation(**device.allocator, payload.src_buffer->allocation, 0, VK_WHOLE_SIZE);
+        read_func(src_buffer.allocation_info.pMappedData, to_write);
+        vmaFlushAllocation(**device.allocator, src_buffer.allocation, 0, VK_WHOLE_SIZE);
 
-        const auto& cmd = payload.src_buffer->command_buffer;
-        cmd.reset();
-
-        cmd.begin({});
-        cmd.copyBuffer(**payload.src_buffer, *dst_buffer,
+        const auto& cmd = src_buffer.command_buffer;
+        cmd.copyBuffer(*src_buffer, *dst_buffer,
                        {{
                            .dstOffset = dst_buffer.size - bytes_remaining,
                            .size = to_write,
@@ -89,23 +64,9 @@ void ReadAndUploadBuffer(const VulkanDevice& device, const VulkanBuffer& dst_buf
                 }},
             });
         }
-        cmd.end();
 
-        device.graphics_queue.submit({{
-                                         .commandBufferCount = 1,
-                                         .pCommandBuffers = TempArr<vk::CommandBuffer>{*cmd},
-                                     }},
-                                     *payload.upload_completed_fence);
-
-        current = (current + 1) % payloads.size();
+        handle.Submit();
         bytes_remaining -= to_write;
-    }
-
-    if (device->waitForFences(
-            {*payloads[0].upload_completed_fence, *payloads[1].upload_completed_fence}, VK_TRUE,
-            std::numeric_limits<u64>::max()) != vk::Result::eSuccess) {
-
-        throw std::runtime_error("Failed to wait for fences");
     }
 }
 

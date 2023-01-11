@@ -11,28 +11,30 @@ BEGIN_STRUCT(Material)
 
 // PBR metallic roughness
 vec4 base_color_factor;
-uint base_color_texture_index;
+int base_color_texture_index; // -1 for no texture
 uint base_color_texture_texcoord;
 float metallic_factor;
 float roughness_factor;
-uint metallic_texture_index;
-uint metallic_texture_texcoord;
-uint roughness_texture_index;
-uint roughness_texture_texcoord;
-uint metallic_roughness_texture_index;
+int metallic_roughness_texture_index;
 uint metallic_roughness_texture_texcoord;
 
 // Additional textures
-uint normal_texture_index;
+int normal_texture_index;
 uint normal_texture_texcoord;
 float normal_scale;
 
-uint occlusion_texture_index;
+int occlusion_texture_index;
 uint occlusion_texture_texcoord;
-uint emissive_texture_index;
+float occlusion_strength;
+
+int emissive_texture_index;
 uint emissive_texture_texcoord;
 
-INSERT_PADDING(3)
+INSERT_PADDING(2)
+
+vec3 emissive_factor;
+
+INSERT_PADDING(1)
 
 END_STRUCT(Material)
 
