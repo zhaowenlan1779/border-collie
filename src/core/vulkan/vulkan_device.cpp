@@ -20,6 +20,8 @@ VulkanDevice::VulkanDevice(
     const Helpers::GenericStructureChain<vk::PhysicalDeviceFeatures2>& features)
     : surface{instance, surface_} {
 
+    startup_path = std::filesystem::current_path();
+
     vk::raii::PhysicalDevices physical_devices{instance};
 
     // Prefer discrete GPUs
@@ -148,7 +150,7 @@ VulkanDevice::~VulkanDevice() {
     // Save pipeline cache
     const auto& data = pipeline_cache.getData();
 
-    std::ofstream out_file(std::filesystem::path{PipelineCachePath}, std::ios::binary);
+    std::ofstream out_file(startup_path / PipelineCachePath, std::ios::binary);
     out_file.write(reinterpret_cast<const char*>(data.data()), data.size());
 }
 

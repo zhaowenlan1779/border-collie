@@ -30,7 +30,7 @@ static void OnFramebufferResized(GLFWwindow* window, int width, int height) {
     }
 }
 
-int main() {
+int main(int argc, char* argv[]) {
     Common::InitializeLogging();
 
     glfwInit();
@@ -63,7 +63,7 @@ int main() {
     renderer.Init(surface, vk::Extent2D{800, 600});
 
     try {
-        GLTF::Container gltf(u8"scene.gltf");
+        GLTF::Container gltf(argc >= 2 ? std::filesystem::u8path(argv[1]) : u8"scene.gltf");
         renderer.LoadScene(gltf);
     } catch (std::exception& e) {
         SPDLOG_ERROR("Failed to load glTF scene: {}", e.what());

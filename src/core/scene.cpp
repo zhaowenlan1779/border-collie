@@ -11,6 +11,7 @@
 #include <spdlog/spdlog.h>
 #include "common/assert.h"
 #include "common/ranges.h"
+#include "common/scope_exit.h"
 #include "core/gltf/gltf_container.h"
 #include "core/gltf/json_helpers.hpp"
 #include "core/scene.h"
@@ -28,15 +29,26 @@ BufferFile::BufferFile(SceneLoader& loader, const GLTF::Buffer& buffer) {
         Load(*buffer.uri);
     } else if (loader.container.extra_buffer_file.has_value()) {
         // There should only be one such buffer
-        file = std::move(*loader.container.extra_buffer_file);
+        file = std::move(loader.container.extra_buffer_file);
         offset = loader.container.extra_buffer_offset;
-        loader.container.extra_buffer_file.reset();
     } else {
         SPDLOG_ERROR("No URI but no GLB buffer either");
         throw std::runtime_error("No URI but no GLB buffer either");
     }
 }
 BufferFile::~BufferFile() = default;
+
+static constexpr int HexCharToInt(char c) {
+    if ('0' <= c && c <= '9') {
+        return c - '0';
+    } else if ('a' <= c && c <= 'f') {
+        return c - 'a' + 10;
+    } else if ('A' <= c && c <= 'F') {
+        return c - 'A' + 10;
+    }
+    SPDLOG_ERROR("Invalid hex char {}", c);
+    throw std::runtime_error("Invalid hex char");
+}
 
 void BufferFile::Load(const std::string_view& uri) {
     if (uri.starts_with("data:")) {
@@ -70,21 +82,42 @@ void BufferFile::Load(const std::string_view& uri) {
         base64_decode(uri.data() + i, src_len, reinterpret_cast<char*>(data.data()), &file_size, 0);
         data.resize(file_size);
     } else {
+        // Un-percent-encode the uri
+        std::vector<char> decoded_str(uri.size() + 1);
+
+        std::size_t i = 0, j = 0;
+        while (i < uri.size()) {
+            if (uri[i] == '%') {
+                if (i >= uri.size() - 2) {
+                    SPDLOG_ERROR("URI is improperly percent-encoded {}", uri);
+                    throw std::runtime_error("URI is improperly percent-encoded");
+                }
+                decoded_str[j] =
+                    static_cast<char>(HexCharToInt(uri[i + 1]) * 16 + HexCharToInt(uri[i + 2]));
+                i += 3;
+            } else {
+                decoded_str[j] = uri[i];
+                ++i;
+            }
+            ++j;
+        }
+
         // Open file
-        file = std::ifstream(std::filesystem::u8path(uri), std::ios::ate | std::ios::binary);
-        if (!file) {
-            SPDLOG_ERROR("Failed to open file {}", uri);
+        file = std::ifstream(std::filesystem::u8path(decoded_str.data()),
+                             std::ios::ate | std::ios::binary);
+        if (!*file) {
+            SPDLOG_ERROR("Failed to open file {}", decoded_str.data());
             throw std::runtime_error("Failed to open file");
         }
-        file_size = file.tellg();
-        file.seekg(0);
+        file_size = file->tellg();
+        file->seekg(0);
     }
 }
 
 void BufferFile::Read(void* out, std::size_t size) {
     if (file) {
-        file.read(reinterpret_cast<char*>(out), size);
-        if (!file) {
+        file->read(reinterpret_cast<char*>(out), size);
+        if (!*file) {
             SPDLOG_ERROR("Failed to read from file");
             throw std::runtime_error("Failed to read from file");
         }
@@ -96,8 +129,8 @@ void BufferFile::Read(void* out, std::size_t size) {
 
 void BufferFile::Seek(std::size_t new_pos) {
     if (file) {
-        file.seekg(offset + new_pos);
-        if (!file) {
+        file->seekg(offset + new_pos);
+        if (!*file) {
             SPDLOG_ERROR("Failed to seek file");
             throw std::runtime_error("Failed to seek file");
         }
@@ -135,13 +168,13 @@ GPUAccessor::GPUAccessor(SceneLoader& loader, const GLTF::Accessor& accessor,
         auto& buffer_file = *loader.buffer_files.Get(loader, buffer_view.buffer);
         buffer_file.Seek(accessor.byte_offset + buffer_view.byte_offset);
 
-        gpu_buffer = std::make_unique<VulkanImmUploadBuffer>(
+        gpu_buffer = std::make_shared<VulkanImmUploadBuffer>(
             loader.device,
             VulkanBufferCreateInfo{total_size, params.usage, params.dst_stage_mask,
                                    params.dst_access_mask},
             [&buffer_file](void* data, std::size_t size) { buffer_file.Read(data, size); });
     } else {
-        gpu_buffer = std::make_unique<VulkanZeroedBuffer>(
+        gpu_buffer = std::make_shared<VulkanZeroedBuffer>(
             loader.device, VulkanBufferCreateInfo{total_size, params.usage, params.dst_stage_mask,
                                                   params.dst_access_mask});
     }
@@ -199,7 +232,7 @@ StridedBufferView::BufferInfo StridedBufferView::GetAccessorBufferInfo(
     ASSERT_MSG(iter != chunks.end(), "Failed to find interval containing accessor");
     return {
         .buffer = buffers.at(iter->lower()),
-        .buffer_offset = buffer_view.byte_offset + (start - iter->lower()) * byte_stride,
+        .buffer_offset = (start - iter->lower()) * byte_stride,
         .attribute_offset = attribute_offset,
     };
 }
@@ -297,6 +330,9 @@ Material::Material(SceneLoader& loader, const GLTF::Material& material)
     glsl_material.emissive_factor = material.emissive_factor;
 }
 
+Material::Material(std::string name, const GLSL::Material& glsl_material)
+    : name(std::move(name)), glsl_material(glsl_material) {}
+
 Material::~Material() = default;
 
 MeshPrimitive::MeshPrimitive(SceneLoader& loader, const GLTF::Mesh::Primitive& primitive_)
@@ -349,9 +385,9 @@ void MeshPrimitive::Load(SceneLoader& loader) {
                     .inputRate = vk::VertexInputRate::eVertex,
                     .divisor = 1,
                 });
-                vertex_buffers.emplace_back(info.buffer);
                 raw_vertex_buffers.emplace_back(**info.buffer);
                 vertex_buffer_offsets.emplace_back(info.buffer_offset);
+                vertex_buffers.emplace_back(info.buffer);
                 binding_index_map.emplace(std::make_pair(**info.buffer, info.buffer_offset),
                                           static_cast<u32>(bindings.size() - 1));
             }
@@ -407,18 +443,13 @@ void MeshPrimitive::Load(SceneLoader& loader) {
                 GetBindingIndex(info, *loader.gltf.buffer_views[*accessor.buffer_view].byte_stride);
             attribute_offset = static_cast<u32>(info.attribute_offset);
         } else {
-            const auto stride =
-                GetComponentSize(accessor.component_type) * GLTF::GetComponentCount(accessor.type);
-            bindings.emplace_back(vk::VertexInputBindingDescription2EXT{
-                .binding = static_cast<u32>(bindings.size()),
-                .stride = static_cast<u32>(stride),
-                .inputRate = vk::VertexInputRate::eVertex,
-                .divisor = 1,
-            });
-            raw_vertex_buffers.emplace_back(
-                **loader.gpu_accessors.Get(loader, *accessor_idx, loader.vertex_buffer_params)
-                      ->gpu_buffer);
-            vertex_buffer_offsets.emplace_back(0);
+            binding = GetBindingIndex(
+                {
+                    .buffer = loader.gpu_accessors
+                                  .Get(loader, *accessor_idx, loader.vertex_buffer_params)
+                                  ->gpu_buffer,
+                },
+                GetComponentSize(accessor.component_type) * GLTF::GetComponentCount(accessor.type));
         }
         attributes.emplace_back(vk::VertexInputAttributeDescription2EXT{
             .location = static_cast<u32>(i),
@@ -445,7 +476,16 @@ void Mesh::Load(SceneLoader& loader) {
     }
 }
 
-Camera::Camera(SceneLoader& loader, const GLTF::Camera& camera_, glm::mat4 transform_)
+Camera::Camera() {
+    camera.perspective = {GLTF::Camera::Perspective{
+        .yfov = {glm::radians(45.0f)},
+        .znear = {0.05},
+    }};
+    view = glm::lookAt(glm::vec3{}, glm::vec3{0, 0, -1}, glm::vec3{0, 1, 0});
+}
+
+Camera::Camera([[maybe_unused]] const SceneLoader& loader, const GLTF::Camera& camera_,
+               glm::mat4 transform_)
     : name(camera_.name.value_or("Unnamed")), transform(std::move(transform_)), camera(camera_) {
     view = glm::lookAt(glm::vec3{transform[3]}, glm::vec3{transform[3] - transform[2]},
                        glm::normalize(glm::vec3{transform[1]}));
@@ -454,21 +494,36 @@ Camera::Camera(SceneLoader& loader, const GLTF::Camera& camera_, glm::mat4 trans
 Camera::~Camera() = default;
 
 glm::mat4 Camera::GetProj(double default_aspect_ratio) const {
+    glm::mat4 proj;
     if (camera.perspective.has_value()) {
         const double aspect_ratio = camera.perspective->aspect_ratio.has_value()
                                         ? *camera.perspective->aspect_ratio
                                         : default_aspect_ratio;
         if (camera.perspective->zfar.has_value()) {
-            return glm::perspective<float>(camera.perspective->yfov, aspect_ratio,
+            proj = glm::perspective<float>(camera.perspective->yfov, aspect_ratio,
                                            camera.perspective->znear, *camera.perspective->zfar);
         } else {
-            return glm::infinitePerspective<float>(camera.perspective->yfov, aspect_ratio,
+            proj = glm::infinitePerspective<float>(camera.perspective->yfov, aspect_ratio,
                                                    camera.perspective->znear);
         }
     } else if (camera.orthographic.has_value()) {
-        return glm::ortho<float>(-camera.orthographic->xmag, camera.orthographic->xmag,
+        proj = glm::ortho<float>(-camera.orthographic->xmag, camera.orthographic->xmag,
                                  -camera.orthographic->ymag, camera.orthographic->ymag,
                                  camera.orthographic->znear, camera.orthographic->zfar);
+    } else {
+        SPDLOG_ERROR("Camera {} has neither perspective nor orthographic", name);
+        throw std::runtime_error("Camera has neither perspective nor orthographic");
+    }
+    proj[1][1] *= -1;
+    return proj;
+}
+
+double Camera::GetAspectRatio(double default_aspect_ratio) const {
+    if (camera.perspective.has_value()) {
+        return camera.perspective->aspect_ratio.has_value() ? *camera.perspective->aspect_ratio
+                                                            : default_aspect_ratio;
+    } else if (camera.orthographic.has_value()) {
+        return camera.orthographic->xmag / camera.orthographic->ymag;
     } else {
         SPDLOG_ERROR("Camera {} has neither perspective nor orthographic", name);
         throw std::runtime_error("Camera has neither perspective nor orthographic");
@@ -541,6 +596,12 @@ SceneLoader::SceneLoader(const BufferParams& vertex_buffer_params_,
                          VulkanDevice& device_, GLTF::Container& container_)
     : vertex_buffer_params(vertex_buffer_params_), index_buffer_params(index_buffer_params_),
       scene(scene_), device(device_), container(container_) {
+
+    const auto prev_current_path = std::filesystem::current_path();
+    if (container.path.has_parent_path()) {
+        std::filesystem::current_path(container.path.parent_path());
+    }
+    SCOPE_EXIT({ std::filesystem::current_path(prev_current_path); });
 
     gltf = JSON::Deserialize<GLTF::GLTF>(container.json.get_value());
 

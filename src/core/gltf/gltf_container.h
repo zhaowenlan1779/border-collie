@@ -16,6 +16,7 @@ public:
     explicit Container(const std::filesystem::path& path);
     ~Container();
 
+    std::filesystem::path path;
     simdjson::ondemand::parser parser;
     std::vector<char> json_data;
     simdjson::ondemand::document json;

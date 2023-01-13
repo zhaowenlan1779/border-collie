@@ -112,7 +112,7 @@ VulkanTexture::VulkanTexture(VulkanDevice& device, std::vector<u8> file_data, bo
                                      }};
 
     // Determine & create mipmaps folder
-    const std::filesystem::path mipmaps_folder = u8"mipmaps";
+    const std::filesystem::path mipmaps_folder = device.startup_path / u8"mipmaps";
     std::filesystem::create_directory(mipmaps_folder);
 
     // Hash the image to mark mipmap version, if necessary

@@ -4,6 +4,7 @@
 
 #pragma once
 
+#include <filesystem>
 #include <memory>
 #include <string_view>
 #include <utility>
@@ -53,6 +54,9 @@ public:
     vk::raii::CommandPool command_pool = nullptr;
     std::unique_ptr<VulkanAllocator> allocator;
     vk::raii::Sampler default_sampler = nullptr;
+
+    // For writing files to the correct place even when current path has changed
+    std::filesystem::path startup_path;
 
     static constexpr std::u8string_view PipelineCachePath{u8"cache.bin"};
     vk::raii::PipelineCache pipeline_cache = nullptr;

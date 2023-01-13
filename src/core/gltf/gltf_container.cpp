@@ -31,7 +31,7 @@ static constexpr u32 GLBVersion = 2;
 static constexpr u32 JSONChunkMagic = MakeMagic('J', 'S', 'O', 'N');
 static constexpr u32 BINChunkMagic = MakeMagic('B', 'I', 'N', 0);
 
-Container::Container(const std::filesystem::path& path) {
+Container::Container(const std::filesystem::path& path_) : path(path_) {
     std::ifstream file(path, std::ios::binary);
     if (!file) {
         SPDLOG_ERROR("Failed to open file {}", path.string());

@@ -47,6 +47,7 @@ std::unique_ptr<VulkanDevice> VulkanRasterizer::CreateDevice(
             VK_KHR_SWAPCHAIN_EXTENSION_NAME,
             VK_EXT_VERTEX_INPUT_DYNAMIC_STATE_EXTENSION_NAME,
             VK_EXT_ROBUSTNESS_2_EXTENSION_NAME,
+            VK_EXT_INDEX_TYPE_UINT8_EXTENSION_NAME,
         },
         Helpers::GenericStructureChain{vk::PhysicalDeviceFeatures2{
                                            .features =
@@ -67,6 +68,9 @@ std::unique_ptr<VulkanDevice> VulkanRasterizer::CreateDevice(
                                        },
                                        vk::PhysicalDeviceRobustness2FeaturesEXT{
                                            .nullDescriptor = VK_TRUE,
+                                       },
+                                       vk::PhysicalDeviceIndexTypeUint8FeaturesEXT{
+                                           .indexTypeUint8 = VK_TRUE,
                                        }});
 }
 
@@ -220,8 +224,23 @@ void VulkanRasterizer::LoadScene(GLTF::Container& gltf) {
         throw std::runtime_error("No main scene in glTF");
     }
     if (scene->main_sub_scene->cameras.empty()) {
-        SPDLOG_WARN("No camera in main scene");
+        SPDLOG_WARN("No camera in main scene, creating default camera");
+        scene->main_sub_scene->cameras.emplace_back(std::make_unique<Camera>());
     }
+
+    // Add a default material
+    scene->materials.emplace_back(
+        std::make_unique<Material>("Default", GLSL::Material{
+                                                  .base_color_factor = glm::vec4{1, 1, 1, 1},
+                                                  .base_color_texture_index = -1,
+                                                  .metallic_factor = 1.0,
+                                                  .roughness_factor = 1.0,
+                                                  .metallic_roughness_texture_index = -1,
+                                                  .normal_texture_index = -1,
+                                                  .occlusion_texture_index = -1,
+                                                  .emissive_texture_index = -1,
+                                                  .emissive_factor = glm::vec3{},
+                                              }));
 
     materials = Common::VectorFromRange(
         scene->materials | std::views::transform([this](const std::unique_ptr<Material>& material) {
@@ -235,9 +254,6 @@ void VulkanRasterizer::LoadScene(GLTF::Container& gltf) {
                 },
                 reinterpret_cast<const u8*>(&material->glsl_material));
         }));
-
-    error_texture = std::make_unique<VulkanTexture>(
-        *device, Common::ReadFileContents(u8"textures/texture.jpg"));
 
     descriptor_sets = std::make_unique<VulkanDescriptorSets>(
         *device, materials.size(),
@@ -262,7 +278,7 @@ void VulkanRasterizer::LoadScene(GLTF::Container& gltf) {
                         if (material->glsl_material.base_color_texture_index == -1) {
                             return DescriptorBinding::CombinedImageSamplers{
                                 .images = {{
-                                    .image = *error_texture->image_view,
+                                    .image = VK_NULL_HANDLE,
                                 }},
                             };
                         }
@@ -323,12 +339,27 @@ void VulkanRasterizer::DrawFrame() {
     const auto& frame = frames->AcquireNextFrame();
     frames->BeginFrame();
 
+    const auto& camera = scene->main_sub_scene->cameras[0];
+
+    vk::Extent2D render_extent = swap_chain->extent;
+    const double viewport_aspect_ratio =
+        static_cast<double>(swap_chain->extent.width) / swap_chain->extent.height;
+    const double camera_aspect_ratio = camera->GetAspectRatio(viewport_aspect_ratio);
+    const double relative_aspect_ratio = viewport_aspect_ratio / camera_aspect_ratio;
+    if (relative_aspect_ratio > 1) {
+        render_extent.width /= relative_aspect_ratio;
+    } else {
+        render_extent.height *= relative_aspect_ratio;
+    }
+
+    const auto camera_transform = camera->GetProj(viewport_aspect_ratio) * camera->view;
+
     const auto& cmd = frame.command_buffer;
     pipeline->BeginRenderPass(cmd, {
                                        .framebuffer = *frame.extras.framebuffer,
                                        .renderArea =
                                            {
-                                               .extent = swap_chain->extent,
+                                               .extent = render_extent,
                                            },
                                        .clearValueCount = 2,
                                        .pClearValues =
@@ -341,21 +372,13 @@ void VulkanRasterizer::DrawFrame() {
 
     // TODO: Many optimization opportunities
     for (const auto& [mesh, model_transform] : scene->main_sub_scene->mesh_instances) {
-        if (scene->main_sub_scene->cameras.empty()) {
-            cmd.pushConstants<glm::mat4>(*pipeline->pipeline_layout,
-                                         vk::ShaderStageFlagBits::eVertex, 0, model_transform);
-        } else {
-            const auto& camera = scene->main_sub_scene->cameras[0];
-            const auto transform = camera->GetProj(static_cast<double>(swap_chain->extent.width) /
-                                                   swap_chain->extent.height) *
-                                   camera->view * model_transform;
-            cmd.pushConstants<glm::mat4>(*pipeline->pipeline_layout,
-                                         vk::ShaderStageFlagBits::eVertex, 0, transform);
-        }
-
+        cmd.pushConstants<glm::mat4>(*pipeline->pipeline_layout, vk::ShaderStageFlagBits::eVertex,
+                                     0, camera_transform * model_transform);
         for (const auto& primitive : mesh->primitives) {
+            const std::size_t material =
+                primitive->material == -1 ? materials.size() - 1 : primitive->material;
             cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *pipeline->pipeline_layout, 0,
-                                   descriptor_sets->descriptor_sets[primitive->material], {});
+                                   descriptor_sets->descriptor_sets[material], {});
 
             cmd.setVertexInputEXT(primitive->bindings, primitive->attributes);
             cmd.bindVertexBuffers(0, primitive->raw_vertex_buffers,

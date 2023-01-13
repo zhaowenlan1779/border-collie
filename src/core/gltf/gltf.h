@@ -119,12 +119,13 @@ inline vk::Format GetVertexInputFormat(Accessor::ComponentType component_type,
 
 constexpr vk::IndexType GetIndexType(Accessor::ComponentType component_type) {
     switch (component_type) {
+    case Accessor::ComponentType::UnsignedByte:
+        return vk::IndexType::eUint8EXT;
     case Accessor::ComponentType::UnsignedShort:
         return vk::IndexType::eUint16;
     case Accessor::ComponentType::UnsignedInt:
         return vk::IndexType::eUint32;
     default:
-        // TODO: uint8 (requires an extension)
         SPDLOG_ERROR("Invalid component type for index buffer {}",
                      static_cast<int>(component_type));
         throw std::runtime_error("Invalid component type for index buffer {}");

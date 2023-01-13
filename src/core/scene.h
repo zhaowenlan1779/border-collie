@@ -7,6 +7,7 @@
 #include <fstream>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -45,7 +46,7 @@ public:
     std::size_t pos = 0;
     std::size_t file_size = 0;
 
-    std::ifstream file;
+    std::optional<std::ifstream> file;
     std::size_t offset = 0;
 };
 
@@ -68,7 +69,7 @@ struct BufferParams {
 class GPUAccessor : NonCopyable {
 public:
     std::string name;
-    std::unique_ptr<VulkanBuffer> gpu_buffer;
+    std::shared_ptr<VulkanBuffer> gpu_buffer;
     GLTF::Accessor::ComponentType component_type{};
     std::string type;
     std::size_t count{};
@@ -140,6 +141,7 @@ public:
     GLSL::Material glsl_material;
 
     explicit Material(SceneLoader& loader, const GLTF::Material& material);
+    explicit Material(std::string name, const GLSL::Material& glsl_material);
     ~Material();
 };
 
@@ -149,9 +151,11 @@ public:
 
     std::vector<vk::VertexInputAttributeDescription2EXT> attributes;
     std::vector<vk::VertexInputBindingDescription2EXT> bindings;
-    std::vector<std::shared_ptr<VulkanBuffer>> vertex_buffers;
     std::vector<vk::Buffer> raw_vertex_buffers;
     std::vector<std::size_t> vertex_buffer_offsets;
+
+    // Keep them alive
+    std::vector<std::shared_ptr<VulkanBuffer>> vertex_buffers;
 
     std::shared_ptr<GPUAccessor> index_buffer;
 
@@ -185,10 +189,12 @@ public:
     glm::mat4 transform;
     glm::mat4 view;
 
-    explicit Camera(SceneLoader& loader, const GLTF::Camera& camera, glm::mat4 transform);
+    explicit Camera(); // default perspective camera
+    explicit Camera(const SceneLoader& loader, const GLTF::Camera& camera, glm::mat4 transform);
     ~Camera();
 
     glm::mat4 GetProj(double default_aspect_ratio) const;
+    double GetAspectRatio(double default_aspect_ratio) const;
 
 private:
     GLTF::Camera camera;

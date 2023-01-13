@@ -1,4 +1,5 @@
 add_executable(frontend_glfw
+    border_collie.rc
     main.cpp
 )
 
