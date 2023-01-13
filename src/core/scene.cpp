@@ -96,13 +96,13 @@ void BufferFile::Read(void* out, std::size_t size) {
 
 void BufferFile::Seek(std::size_t new_pos) {
     if (file) {
-        file.seekg(new_pos);
+        file.seekg(offset + new_pos);
         if (!file) {
             SPDLOG_ERROR("Failed to seek file");
             throw std::runtime_error("Failed to seek file");
         }
     } else {
-        pos = new_pos;
+        pos = offset + new_pos;
     }
 }
 

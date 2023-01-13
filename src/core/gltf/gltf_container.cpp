@@ -53,7 +53,7 @@ Container::Container(const std::filesystem::path& path) {
         }
 
         GLBChunkHeader json_header;
-        file.read(reinterpret_cast<char*>(&json_header), sizeof(header));
+        file.read(reinterpret_cast<char*>(&json_header), sizeof(json_header));
         if (!file || json_header.type != JSONChunkMagic) {
             SPDLOG_ERROR("First chunk of GLB is not JSON {}", path.string());
             throw std::runtime_error("First chunk of GLB should be JSON");
