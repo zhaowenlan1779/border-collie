@@ -41,24 +41,27 @@ VulkanAccelStructure::VulkanAccelStructure(
     Init(geometries, build_ranges);
 }
 
-VulkanAccelStructure::VulkanAccelStructure(
-    const vk::ArrayProxy<const std::unique_ptr<VulkanAccelStructure>>& instances)
-    : device((*instances.begin())->device), type(vk::AccelerationStructureTypeKHR::eTopLevel) {
+constexpr vk::TransformMatrixKHR ToVulkanMatrix(const glm::mat4& mat) {
+    return {std::array{
+        std::array{mat[0][0], mat[1][0], mat[2][0], mat[3][0]},
+        std::array{mat[0][1], mat[1][1], mat[2][1], mat[3][1]},
+        std::array{mat[0][2], mat[1][2], mat[2][2], mat[3][2]},
+    }};
+}
+
+VulkanAccelStructure::VulkanAccelStructure(const vk::ArrayProxy<const BLASInstance>& instances)
+    : device((*instances.begin()).blas.device), type(vk::AccelerationStructureTypeKHR::eTopLevel) {
 
     const auto instance_geometries = Common::VectorFromRange(
-        instances | std::views::transform([this](const auto& ptr) {
+        instances | std::views::transform([this](const auto& instance) {
             return vk::AccelerationStructureInstanceKHR{
-                .transform = {std::array{
-                    std::array{1.0f, 0.0f, 0.0f, 0.0f},
-                    std::array{0.0f, 1.0f, 0.0f, 0.0f},
-                    std::array{0.0f, 0.0f, 1.0f, 0.0f},
-                }},
+                .transform = ToVulkanMatrix(instance.transform),
                 .instanceCustomIndex = 0,
                 .mask = 0xFF,
                 .instanceShaderBindingTableRecordOffset = 0,
                 .flags = VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR,
                 .accelerationStructureReference = device->getBufferAddress({
-                    .buffer = **ptr->compacted_as->buffer,
+                    .buffer = **instance.blas.compacted_as->buffer,
                 }),
             };
         }));
@@ -157,7 +160,6 @@ void VulkanAccelStructure::Init(
     });
 
     build_cmdbuf.begin({.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
-
     build_cmdbuf.buildAccelerationStructuresKHR(geometry_info, build_ranges.data());
     build_cmdbuf.resetQueryPool(*query_pool, 0, 1);
     build_cmdbuf.pipelineBarrier2({
@@ -182,14 +184,11 @@ void VulkanAccelStructure::Init(
 
 VulkanAccelStructure::~VulkanAccelStructure() = default;
 
-void VulkanAccelStructure::Compact(bool should_wait) {
+void VulkanAccelStructure::Compact() {
     if (compacted) {
         return;
     }
-    const auto wait_result = should_wait ? device->waitForFences({*build_fence}, VK_FALSE,
-                                                                 std::numeric_limits<u64>::max())
-                                         : build_fence.getStatus();
-    if (wait_result != vk::Result::eSuccess) {
+    if (build_fence.getStatus() != vk::Result::eSuccess) {
         return;
     }
 
@@ -198,8 +197,8 @@ void VulkanAccelStructure::Compact(bool should_wait) {
     scratch_buffer.reset();
     instances_buffer.reset();
 
-    const auto [result, compacted_size] =
-        query_pool.getResult<VkDeviceSize>(0, 1, sizeof(VkDeviceSize));
+    const auto [result, compacted_size] = query_pool.getResult<VkDeviceSize>(
+        0, 1, sizeof(VkDeviceSize), vk::QueryResultFlagBits::e64);
     if (result != vk::Result::eSuccess) {
         vk::throwResultException(result, "vkGetQueryPoolResult");
         return;
@@ -228,11 +227,11 @@ void VulkanAccelStructure::Compact(bool should_wait) {
     compacted = true;
 }
 
-void VulkanAccelStructure::Cleanup(bool should_wait) {
-    const auto result = should_wait ? device->waitForFences({*compact_fence}, VK_FALSE,
-                                                            std::numeric_limits<u64>::max())
-                                    : compact_fence.getStatus();
-    if (result == vk::Result::eSuccess) {
+void VulkanAccelStructure::Cleanup() {
+    if (!compacted || !as) {
+        return;
+    }
+    if (compact_fence.getStatus() == vk::Result::eSuccess) {
         compact_fence = nullptr;
         compact_cmdbuf = nullptr;
         as.reset();

@@ -129,6 +129,8 @@ void VulkanRenderer::Init(vk::SurfaceKHR surface, const vk::Extent2D& actual_ext
 }
 
 void VulkanRenderer::CreateRenderTargets() {
+    Helpers::OneTimeCommandContext context{*device};
+
     const auto& info = GetOffscreenImageInfo();
     for (auto& frame_in_flight : pp_frames->frames_in_flight) {
         auto& frame = frame_in_flight.extras;
@@ -156,6 +158,27 @@ void VulkanRenderer::CreateRenderTargets() {
                 .usage = VMA_MEMORY_USAGE_AUTO,
                 .priority = 1.0f,
             });
+
+        Helpers::ImageLayoutTransition(
+            *context, frame.image,
+            {
+                .srcStageMask = vk::PipelineStageFlagBits2::eTopOfPipe,
+                .srcAccessMask = vk::AccessFlags2{},
+                .dstStageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput |
+                                vk::PipelineStageFlagBits2::eRayTracingShaderKHR |
+                                vk::PipelineStageFlagBits2::eFragmentShader,
+                .dstAccessMask = vk::AccessFlagBits2::eShaderStorageWrite |
+                                 vk::AccessFlagBits2::eColorAttachmentWrite |
+                                 vk::AccessFlagBits2::eUniformRead,
+                .oldLayout = vk::ImageLayout::eUndefined,
+                .newLayout = vk::ImageLayout::eGeneral,
+                .subresourceRange =
+                    {
+                        .baseMipLevel = 0,
+                        .levelCount = 1,
+                    },
+            });
+
         frame.image_view =
             vk::raii::ImageView{**device,
                                 {

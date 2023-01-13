@@ -7,7 +7,6 @@
 #include <memory>
 #include <utility>
 #include <vector>
-#include <glm/glm.hpp>
 #include <vulkan/vulkan_raii.hpp>
 #include "core/vulkan_renderer.h"
 
@@ -17,11 +16,6 @@ class VulkanAccelStructure;
 class VulkanImmUploadBuffer;
 class VulkanTexture;
 class VulkanRayTracingPipeline;
-template <typename T>
-class VulkanUniformBufferObject;
-namespace GLSL {
-struct PathTracerUBOBlock;
-}
 class VulkanDescriptorSets;
 
 class VulkanPathTracerHW : public VulkanRenderer {
@@ -39,17 +33,12 @@ private:
     OffscreenImageInfo GetOffscreenImageInfo() const override;
     std::unique_ptr<VulkanDevice> CreateDevice(vk::SurfaceKHR surface,
                                                const vk::Extent2D& actual_extent) const override;
-    GLSL::PathTracerUBOBlock GetUniformBufferObject() const;
 
-    std::unique_ptr<VulkanImmUploadBuffer> vertex_buffer{};
-    std::unique_ptr<VulkanImmUploadBuffer> index_buffer{};
-    std::vector<std::unique_ptr<VulkanAccelStructure>> blas;
+    std::vector<std::unique_ptr<VulkanAccelStructure>> blases;
     std::unique_ptr<VulkanAccelStructure> tlas;
     std::unique_ptr<VulkanTexture> texture{};
 
-    struct Frame {
-        std::unique_ptr<VulkanUniformBufferObject<GLSL::PathTracerUBOBlock>> uniform{};
-    };
+    struct Frame {};
     std::unique_ptr<VulkanFramesInFlight<Frame, 2>> frames;
     std::unique_ptr<VulkanDescriptorSets> descriptor_sets;
     std::unique_ptr<VulkanRayTracingPipeline> pipeline;

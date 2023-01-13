@@ -6,6 +6,7 @@
 
 #include <memory>
 #include <utility>
+#include <glm/glm.hpp>
 #include <vulkan/vulkan_raii.hpp>
 #include "common/common_types.h"
 
@@ -42,13 +43,16 @@ public:
         vk::AccelerationStructureTypeKHR type = vk::AccelerationStructureTypeKHR::eBottomLevel);
 
     // Top level
-    explicit VulkanAccelStructure(
-        const vk::ArrayProxy<const std::unique_ptr<VulkanAccelStructure>>& instances);
+    struct BLASInstance {
+        const VulkanAccelStructure& blas;
+        glm::mat4 transform;
+    };
+    explicit VulkanAccelStructure(const vk::ArrayProxy<const BLASInstance>& instances);
 
     ~VulkanAccelStructure();
 
-    void Compact(bool should_wait = false);
-    void Cleanup(bool should_wait = false);
+    void Compact();
+    void Cleanup();
 
     vk::AccelerationStructureKHR operator*() const noexcept {
         return **compacted_as;
@@ -68,10 +72,14 @@ private:
     vk::raii::Fence build_fence = nullptr;
     vk::raii::Fence compact_fence = nullptr;
     vk::raii::QueryPool query_pool = nullptr;
+
+    // Really means 'whether compact has started'
     bool compacted = false;
 
     // For top level initialization
     std::unique_ptr<VulkanImmUploadBuffer> instances_buffer{};
+
+    friend class VulkanPathTracerHW;
 };
 
 } // namespace Renderer

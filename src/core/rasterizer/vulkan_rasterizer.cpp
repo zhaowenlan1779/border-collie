@@ -219,14 +219,6 @@ void VulkanRasterizer::LoadScene(GLTF::Container& gltf) {
                        *scene,
                        *device,
                        gltf};
-    if (!scene->main_sub_scene) {
-        SPDLOG_ERROR("No main scene in glTF");
-        throw std::runtime_error("No main scene in glTF");
-    }
-    if (scene->main_sub_scene->cameras.empty()) {
-        SPDLOG_WARN("No camera in main scene, creating default camera");
-        scene->main_sub_scene->cameras.emplace_back(std::make_unique<Camera>());
-    }
 
     // Add a default material
     scene->materials.emplace_back(

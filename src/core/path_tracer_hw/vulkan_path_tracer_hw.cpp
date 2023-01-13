@@ -3,11 +3,12 @@
 // Refer to the license.txt file included.
 
 #include <array>
-#include <glm/gtc/matrix_transform.hpp>
-#include "common/file_util.h"
+#include <unordered_map>
+#include <glm/glm.hpp>
+#include <spdlog/spdlog.h>
+#include "common/ranges.h"
 #include "core/path_tracer_hw/vulkan_path_tracer_hw.h"
 #include "core/scene.h"
-#include "core/shaders/renderer_glsl.h"
 #include "core/vulkan/vulkan_accel_structure.h"
 #include "core/vulkan/vulkan_allocator.h"
 #include "core/vulkan/vulkan_buffer.h"
@@ -71,137 +72,212 @@ std::unique_ptr<VulkanDevice> VulkanPathTracerHW::CreateDevice(
                                        }});
 }
 
-struct Vertex {
-    glm::vec3 pos;
-    glm::vec3 color;
-    glm::vec2 texCoord;
-};
-
 void VulkanPathTracerHW::Init(vk::SurfaceKHR surface, const vk::Extent2D& actual_extent) {
     VulkanRenderer::Init(surface, actual_extent);
+}
 
-    // Buffers & Textures
-    const std::vector<Vertex> vertices = {{{-0.5f, -0.5f, 0.0f}, {1.0f, 0.0f, 0.0f}, {1.0f, 0.0f}},
-                                          {{0.5f, -0.5f, 0.0f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f}},
-                                          {{0.5f, 0.5f, 0.0f}, {0.0f, 0.0f, 1.0f}, {0.0f, 1.0f}},
-                                          {{-0.5f, 0.5f, 0.0f}, {1.0f, 1.0f, 1.0f}, {1.0f, 1.0f}}};
-    vertex_buffer = std::make_unique<VulkanImmUploadBuffer>(
-        *device,
-        VulkanBufferCreateInfo{
-            .size = vertices.size() * sizeof(Vertex),
+struct PathTracerPushConstant {
+    glm::mat4 view_inverse;
+    glm::mat4 proj_inverse;
+};
+
+void VulkanPathTracerHW::LoadScene(GLTF::Container& gltf) {
+    scene = std::make_unique<Scene>();
+
+    SceneLoader loader{
+        {
             .usage = vk::BufferUsageFlagBits::eAccelerationStructureBuildInputReadOnlyKHR |
                      vk::BufferUsageFlagBits::eShaderDeviceAddress,
             .dst_stage_mask = vk::PipelineStageFlagBits2::eAccelerationStructureBuildKHR,
             .dst_access_mask = vk::AccessFlagBits2::eShaderRead,
         },
-        reinterpret_cast<const u8*>(vertices.data()));
-
-    const std::vector<u16> indices = {0, 1, 2, 2, 3, 0};
-    index_buffer = std::make_unique<VulkanImmUploadBuffer>(
-        *device,
-        VulkanBufferCreateInfo{
-            .size = indices.size() * sizeof(u16),
+        {
             .usage = vk::BufferUsageFlagBits::eAccelerationStructureBuildInputReadOnlyKHR |
                      vk::BufferUsageFlagBits::eShaderDeviceAddress,
             .dst_stage_mask = vk::PipelineStageFlagBits2::eAccelerationStructureBuildKHR,
             .dst_access_mask = vk::AccessFlagBits2::eShaderRead,
         },
-        reinterpret_cast<const u8*>(indices.data()));
-
-    texture = std::make_unique<VulkanTexture>(*device,
-                                              Common::ReadFileContents(u8"textures/texture.jpg"));
+        *scene,
+        *device,
+        gltf};
 
     // Build acceleration structures
-    // clang-format off
-    blas.clear();
-    blas.emplace_back(std::make_unique<VulkanAccelStructure>(
-        *device,
-        vk::AccelerationStructureGeometryKHR{
-            .geometryType = vk::GeometryTypeKHR::eTriangles,
-            .geometry =
-                {
-                    .triangles =
-                        {
-                            .vertexFormat = vk::Format::eR32G32B32Sfloat,
-                            .vertexData =
-                                {
-                                    .deviceAddress = (*device)->getBufferAddress({
-                                        .buffer = **vertex_buffer,
-                                    }),
-                                },
-                            .vertexStride = sizeof(Vertex),
-                            .maxVertex = static_cast<u32>(vertices.size()),
-                            .indexType = vk::IndexType::eUint16,
-                            .indexData =
-                                {
-                                    .deviceAddress = (*device)->getBufferAddress({
-                                        .buffer = **index_buffer,
-                                    }),
-                                },
-                        },
-                },
-            .flags = vk::GeometryFlagBitsKHR::eOpaque,
-        },
-        vk::AccelerationStructureBuildRangeInfoKHR{
-            .primitiveCount = static_cast<u32>(indices.size() / 3),
-        }));
-    blas[0]->Compact(true);
-    blas[0]->Cleanup(true);
-    // clang-format on
+    blases.clear();
 
-    tlas = std::make_unique<VulkanAccelStructure>(blas);
-    tlas->Compact(true);
-    tlas->Cleanup(true);
+    // Mesh ptr -> starting position in array
+    std::unordered_map<std::shared_ptr<Mesh>, std::size_t> mesh_blas_map;
+    for (const auto& [mesh, transform] : scene->main_sub_scene->mesh_instances) {
+        if (mesh_blas_map.count(mesh)) {
+            continue;
+        }
+        mesh_blas_map.emplace(mesh, blases.size());
 
-    frames = std::make_unique<VulkanFramesInFlight<Frame, 2>>(*device);
-    for (auto& frame_in_flight : frames->frames_in_flight) {
-        frame_in_flight.extras.uniform =
-            std::make_unique<VulkanUniformBufferObject<GLSL::PathTracerUBOBlock>>(
-                *device->allocator, vk::PipelineStageFlagBits2::eRayTracingShaderKHR);
+        for (const auto& primitive : mesh->primitives) {
+            // Location 0 is POSITION
+            const auto& attribute = primitive->attributes[0];
+            vk::AccelerationStructureGeometryKHR geometry{
+                .geometryType = vk::GeometryTypeKHR::eTriangles,
+                .geometry =
+                    {
+                        .triangles =
+                            {
+                                .vertexFormat = attribute.format,
+                                .vertexData =
+                                    {
+                                        .deviceAddress =
+                                            (*device)->getBufferAddress({
+                                                .buffer = primitive->raw_vertex_buffers[0],
+                                            }) +
+                                            primitive->vertex_buffer_offsets[0] + attribute.offset,
+                                    },
+                                .vertexStride = primitive->bindings[attribute.binding].stride,
+                                .maxVertex = static_cast<u32>(primitive->max_vertices),
+                            },
+                    },
+                .flags = vk::GeometryFlagBitsKHR::eOpaque,
+            };
+            if (primitive->index_buffer) {
+                // TODO: Handle Uint8 indices
+                geometry.geometry.triangles.indexType =
+                    GLTF::GetIndexType(primitive->index_buffer->component_type);
+                geometry.geometry.triangles.indexData = {
+                    .deviceAddress = (*device)->getBufferAddress({
+                        .buffer = **primitive->index_buffer->gpu_buffer,
+                    }),
+                };
+                blases.emplace_back(std::make_unique<VulkanAccelStructure>(
+                    *device, geometry,
+                    vk::AccelerationStructureBuildRangeInfoKHR{
+                        .primitiveCount = static_cast<u32>(primitive->index_buffer->count / 3),
+                    }));
+            } else {
+                geometry.geometry.triangles.indexType = vk::IndexType::eNoneKHR;
+                blases.emplace_back(std::make_unique<VulkanAccelStructure>(
+                    *device, geometry,
+                    vk::AccelerationStructureBuildRangeInfoKHR{
+                        .primitiveCount = static_cast<u32>(primitive->max_vertices / 3),
+                    }));
+            }
+
+            // Try to compact and cleanup all previous BLASes
+            for (auto& blas : blases) {
+                blas->Compact();
+                blas->Cleanup();
+            }
+        }
     }
 
-    descriptor_sets =
-        std::make_unique<VulkanDescriptorSets>(
-            *device, 2,
-            std::initializer_list<DescriptorBinding>{
-                {
-                    .type = vk::DescriptorType::eAccelerationStructureKHR,
-                    .stages = vk::ShaderStageFlagBits::eRaygenKHR,
-                    .value = DescriptorBinding::AccelStructuresValue{{
-                        .accel_structures = {{**tlas}},
-                    }},
-                },
-                {
-                    .type = vk::DescriptorType::eStorageImage,
-                    .stages = vk::ShaderStageFlagBits::eRaygenKHR,
-                    .value =
-                        DescriptorBinding::CombinedImageSamplersValue{
-                            {
-                                .images = {{
-                                    .image = *pp_frames->frames_in_flight[0].extras.image_view,
-                                    .layout = vk::ImageLayout::eGeneral,
-                                }},
-                            },
-                            {
-                                .images = {{
-                                    .image = *pp_frames->frames_in_flight[1].extras.image_view,
-                                    .layout = vk::ImageLayout::eGeneral,
-                                }},
-                            },
-                        },
-                },
-                {
-                    .type = vk::DescriptorType::eUniformBuffer,
-                    .stages = vk::ShaderStageFlagBits::eRaygenKHR,
-                    .value =
-                        DescriptorBinding::BuffersValue{
-                            {.buffers =
-                                 {{*frames->frames_in_flight[0].extras.uniform->dst_buffer}}},
-                            {.buffers =
-                                 {{*frames->frames_in_flight[1].extras.uniform->dst_buffer}}},
-                        },
-                },
+    // Wait until all compacts have started
+    auto blases_to_compact = Common::VectorFromRange(
+        blases | std::views::filter([](const auto& ptr) { return *ptr->build_fence; }) |
+        std::views::transform(&std::unique_ptr<VulkanAccelStructure>::get));
+    while (!blases_to_compact.empty()) {
+        const auto result = (*device)->waitForFences(
+            Common::VectorFromRange(blases_to_compact |
+                                    std::views::transform([](VulkanAccelStructure* blas) {
+                                        return *blas->build_fence;
+                                    })),
+            VK_FALSE, std::numeric_limits<u64>::max());
+        if (result != vk::Result::eSuccess) {
+            SPDLOG_ERROR("Failed to wait for fences");
+            throw std::runtime_error("Failed to wait for fences");
+        }
+
+        std::vector<VulkanAccelStructure*> new_blases_to_compact;
+        for (auto* blas : blases_to_compact) {
+            if (blas->build_fence.getStatus() == vk::Result::eSuccess) {
+                blas->Compact();
+            } else {
+                new_blases_to_compact.emplace_back(blas);
+            }
+        }
+        blases_to_compact = std::move(new_blases_to_compact);
+
+        for (auto& blas : blases) {
+            blas->Cleanup();
+        }
+    }
+
+    std::vector<VulkanAccelStructure::BLASInstance> instances;
+    for (const auto& [mesh, transform] : scene->main_sub_scene->mesh_instances) {
+        const std::size_t index = mesh_blas_map.at(mesh);
+        for (std::size_t i = 0; i < mesh->primitives.size(); ++i) {
+            instances.emplace_back(VulkanAccelStructure::BLASInstance{
+                .blas = *blases.at(index + i),
+                .transform = transform,
             });
+        }
+    }
+    tlas = std::make_unique<VulkanAccelStructure>(instances);
+
+    // Pending tasks: compact & cleanup TLAS; cleanup BLAS
+    // Strictly speaking we do not have to cleanup everything here, but we do not want to maintain
+    // the states
+    auto blases_to_clean = Common::VectorFromRange(
+        blases | std::views::filter([](const auto& ptr) { return *ptr->compact_fence; }) |
+        std::views::transform(&std::unique_ptr<VulkanAccelStructure>::get));
+    while (!blases_to_clean.empty() || *tlas->build_fence || *tlas->compact_fence) {
+        auto fences = Common::VectorFromRange(
+            blases_to_clean |
+            std::views::transform([](VulkanAccelStructure* blas) { return *blas->compact_fence; }));
+        if (*tlas->build_fence) { // compact has not started
+            fences.emplace_back(*tlas->build_fence);
+        } else if (*tlas->compact_fence) { // not cleaned up
+            fences.emplace_back(*tlas->compact_fence);
+        }
+        const auto result =
+            (*device)->waitForFences(fences, VK_FALSE, std::numeric_limits<u64>::max());
+        if (result != vk::Result::eSuccess) {
+            SPDLOG_ERROR("Failed to wait for fences");
+            throw std::runtime_error("Failed to wait for fences");
+        }
+
+        tlas->Compact();
+        tlas->Cleanup();
+
+        std::vector<VulkanAccelStructure*> new_blases_to_clean;
+        for (auto* blas : blases_to_clean) {
+            if (blas->compact_fence.getStatus() == vk::Result::eSuccess) {
+                blas->Cleanup();
+            } else {
+                new_blases_to_clean.emplace_back(blas);
+            }
+        }
+        blases_to_clean = std::move(new_blases_to_clean);
+    }
+
+    frames = std::make_unique<VulkanFramesInFlight<Frame, 2>>(*device);
+
+    descriptor_sets = std::make_unique<VulkanDescriptorSets>(
+        *device, 2,
+        std::initializer_list<DescriptorBinding>{
+            {
+                .type = vk::DescriptorType::eAccelerationStructureKHR,
+                .stages = vk::ShaderStageFlagBits::eRaygenKHR,
+                .value = DescriptorBinding::AccelStructuresValue{{
+                    .accel_structures = {{**tlas}},
+                }},
+            },
+            {
+                .type = vk::DescriptorType::eStorageImage,
+                .stages = vk::ShaderStageFlagBits::eRaygenKHR,
+                .value =
+                    DescriptorBinding::CombinedImageSamplersValue{
+                        {
+                            .images = {{
+                                .image = *pp_frames->frames_in_flight[0].extras.image_view,
+                                .layout = vk::ImageLayout::eGeneral,
+                            }},
+                        },
+                        {
+                            .images = {{
+                                .image = *pp_frames->frames_in_flight[1].extras.image_view,
+                                .layout = vk::ImageLayout::eGeneral,
+                            }},
+                        },
+                    },
+            },
+        });
 
     pipeline = std::make_unique<VulkanRayTracingPipeline>(
         *device,
@@ -241,57 +317,33 @@ void VulkanPathTracerHW::Init(vk::SurfaceKHR surface, const vk::Extent2D& actual
         vk::PipelineLayoutCreateInfo{
             .setLayoutCount = 1,
             .pSetLayouts = &*descriptor_sets->descriptor_set_layout,
+            .pushConstantRangeCount = 1,
+            .pPushConstantRanges = TempArr<vk::PushConstantRange>{{
+                PushConstant<PathTracerPushConstant>(vk::ShaderStageFlagBits::eRaygenKHR),
+            }},
         });
-}
-
-void VulkanPathTracerHW::LoadScene(GLTF::Container& gltf) {
-    scene = std::make_unique<Scene>();
-
-    SceneLoader loader{
-        {
-            .usage = vk::BufferUsageFlagBits::eAccelerationStructureBuildInputReadOnlyKHR |
-                     vk::BufferUsageFlagBits::eShaderDeviceAddress,
-            .dst_stage_mask = vk::PipelineStageFlagBits2::eAccelerationStructureBuildKHR,
-            .dst_access_mask = vk::AccessFlagBits2::eShaderRead,
-        },
-        {
-            .usage = vk::BufferUsageFlagBits::eAccelerationStructureBuildInputReadOnlyKHR |
-                     vk::BufferUsageFlagBits::eShaderDeviceAddress,
-            .dst_stage_mask = vk::PipelineStageFlagBits2::eAccelerationStructureBuildKHR,
-            .dst_access_mask = vk::AccessFlagBits2::eShaderRead,
-        },
-        *scene,
-        *device,
-        gltf};
-}
-
-GLSL::PathTracerUBOBlock VulkanPathTracerHW::GetUniformBufferObject() const {
-    auto proj = glm::perspective(
-        glm::radians(45.0f),
-        swap_chain->extent.width / static_cast<float>(swap_chain->extent.height), 0.1f, 10.0f);
-    proj[1][1] *= -1;
-    return {{
-        // .model =
-        //    glm::rotate(glm::mat4(1.0f), time * glm::radians(90.0f), glm::vec3(0.0f, 0.0f, 1.0f)),
-        .view_inverse = glm::inverse(glm::lookAt(
-            glm::vec3(2.0f, 2.0f, 2.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f))),
-        .proj_inverse = glm::inverse(proj),
-    }};
 }
 
 void VulkanPathTracerHW::DrawFrame() {
     device->allocator->CleanupStagingBuffers();
 
     const auto& frame = frames->AcquireNextFrame();
-    frame.extras.uniform->Update(GetUniformBufferObject());
 
     frames->BeginFrame();
 
     const auto& cmd = frame.command_buffer;
-    frame.extras.uniform->Upload(cmd);
     cmd.bindPipeline(vk::PipelineBindPoint::eRayTracingKHR, **pipeline);
     cmd.bindDescriptorSets(vk::PipelineBindPoint::eRayTracingKHR, *pipeline->pipeline_layout, 0,
                            descriptor_sets->descriptor_sets[frame.idx], {});
+
+    const auto& camera = scene->main_sub_scene->cameras[0];
+    cmd.pushConstants<PathTracerPushConstant>(
+        *pipeline->pipeline_layout, vk::ShaderStageFlagBits::eRaygenKHR, 0,
+        {{
+            .view_inverse = glm::inverse(camera->view),
+            .proj_inverse = glm::inverse(camera->GetProj(
+                static_cast<double>(swap_chain->extent.width) / swap_chain->extent.height)),
+        }});
     pipeline->TraceRays(cmd, swap_chain->extent.width, swap_chain->extent.height, 1);
 
     frames->EndFrame();

@@ -10,7 +10,6 @@ add_library(core STATIC
     rasterizer/vulkan_rasterizer.h
     scene.cpp
     scene.h
-    shaders/renderer_glsl.h
     shaders/scene_glsl.h
     vulkan/host_glsl_shared.h
     vulkan/vulkan_accel_structure.cpp
@@ -49,8 +48,6 @@ target_shaders(core
     path_tracer_hw/shaders/raytrace.rmiss
     rasterizer/shaders/rasterizer.frag
     rasterizer/shaders/rasterizer.vert
-    rasterizer/shaders/test.frag
-    rasterizer/shaders/test.vert
     shaders/postprocessing.frag
     shaders/postprocessing.vert
 )

@@ -363,6 +363,11 @@ MeshPrimitive::MeshPrimitive(SceneLoader& loader, const GLTF::Mesh::Primitive& p
             loader.gltf.buffer_views[*accessor.buffer_view].byte_stride.has_value()) {
             loader.strided_buffer_views.Get(loader, *accessor.buffer_view)->AddAccessor(accessor);
         }
+        if (max_vertices != 0 && max_vertices != accessor.count) {
+            SPDLOG_ERROR("Different accessors in primitive should have the same count");
+            throw std::runtime_error("Different accessors in primitive should have the same count");
+        }
+        max_vertices = accessor.count;
     }
 }
 
@@ -623,15 +628,17 @@ SceneLoader::SceneLoader(const BufferParams& vertex_buffer_params_,
         }
     }
 
-    // Load scenes
-    for (const auto& sub_scene : gltf.scenes) {
-        scene.sub_scenes.emplace_back(std::make_unique<SubScene>(*this, sub_scene));
-    }
-    for (const auto& sub_scene : scene.sub_scenes) {
-        sub_scene->Load(*this);
-    }
     if (gltf.scene.has_value()) {
-        scene.main_sub_scene = scene.sub_scenes.at(*gltf.scene).get();
+        scene.main_sub_scene = std::make_unique<SubScene>(*this, gltf.scenes[*gltf.scene]);
+        scene.main_sub_scene->Load(*this);
+    } else {
+        SPDLOG_ERROR("No main scene in glTF");
+        throw std::runtime_error("No main scene in glTF");
+    }
+
+    if (scene.main_sub_scene->cameras.empty()) {
+        SPDLOG_WARN("No camera in main scene, creating default camera");
+        scene.main_sub_scene->cameras.emplace_back(std::make_unique<Camera>());
     }
 }
 

@@ -156,6 +156,7 @@ public:
 
     // Keep them alive
     std::vector<std::shared_ptr<VulkanBuffer>> vertex_buffers;
+    std::size_t max_vertices{}; // For ray tracing
 
     std::shared_ptr<GPUAccessor> index_buffer;
 
@@ -220,8 +221,8 @@ private:
 struct Scene {
     std::vector<std::unique_ptr<Texture>> textures;
     std::vector<std::unique_ptr<Material>> materials;
-    std::vector<std::unique_ptr<SubScene>> sub_scenes;
-    SubScene* main_sub_scene = nullptr;
+    // TODO: More sub scenes
+    std::unique_ptr<SubScene> main_sub_scene;
 };
 
 class SceneLoader {

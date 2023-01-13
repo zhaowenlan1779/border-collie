@@ -44,7 +44,6 @@ private:
     std::unique_ptr<VulkanImage> depth_image{};
     vk::raii::ImageView depth_image_view = nullptr;
 
-    std::unique_ptr<VulkanTexture> error_texture{};
     std::vector<std::unique_ptr<VulkanImmUploadBuffer>> materials;
     std::unique_ptr<VulkanDescriptorSets> descriptor_sets;
 

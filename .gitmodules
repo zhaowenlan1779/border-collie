@@ -19,3 +19,6 @@
 [submodule "externals/base64"]
 	path = externals/base64
 	url = git@github.com:aklomp/base64.git
+[submodule "getopt"]
+	path = externals/getopt/getopt
+	url = git@github.com:Chunde/getopt-for-windows.git

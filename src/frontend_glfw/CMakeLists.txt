@@ -4,3 +4,7 @@ add_executable(frontend_glfw
 )
 
 target_link_libraries(frontend_glfw PRIVATE common core glfw spdlog)
+
+if(MSVC)
+    target_link_libraries(frontend_glfw PRIVATE getopt)
+endif()
