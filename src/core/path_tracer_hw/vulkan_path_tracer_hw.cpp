@@ -6,11 +6,13 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include "common/file_util.h"
 #include "core/path_tracer_hw/vulkan_path_tracer_hw.h"
+#include "core/scene.h"
 #include "core/shaders/renderer_glsl.h"
 #include "core/vulkan/vulkan_accel_structure.h"
 #include "core/vulkan/vulkan_allocator.h"
 #include "core/vulkan/vulkan_buffer.h"
 #include "core/vulkan/vulkan_context.h"
+#include "core/vulkan/vulkan_descriptor_sets.h"
 #include "core/vulkan/vulkan_device.h"
 #include "core/vulkan/vulkan_frames_in_flight.hpp"
 #include "core/vulkan/vulkan_helpers.hpp"
@@ -157,38 +159,49 @@ void VulkanPathTracerHW::Init(vk::SurfaceKHR surface, const vk::Extent2D& actual
             std::make_unique<VulkanUniformBufferObject<GLSL::PathTracerUBOBlock>>(
                 *device->allocator, vk::PipelineStageFlagBits2::eRayTracingShaderKHR);
     }
-    frames->CreateDescriptors({{
-        {
-            .type = vk::DescriptorType::eAccelerationStructureKHR,
-            .count = 1,
-            .stages = vk::ShaderStageFlagBits::eRaygenKHR,
-            .accel_structures = **tlas,
-        },
-        {
-            .type = vk::DescriptorType::eStorageImage,
-            .count = 1,
-            .stages = vk::ShaderStageFlagBits::eRaygenKHR,
-            .images = {{
-                .images =
-                    {
-                        *pp_frames->frames_in_flight[0].extras.image_view,
-                        *pp_frames->frames_in_flight[1].extras.image_view,
-                    },
-                .layout = vk::ImageLayout::eGeneral,
-            }},
-        },
-        {
-            .type = vk::DescriptorType::eUniformBuffer,
-            .count = 1,
-            .stages = vk::ShaderStageFlagBits::eRaygenKHR,
-            .buffers = {{
+
+    descriptor_sets =
+        std::make_unique<VulkanDescriptorSets>(
+            *device, 2,
+            std::initializer_list<DescriptorBinding>{
                 {
-                    *frames->frames_in_flight[0].extras.uniform->dst_buffer,
-                    *frames->frames_in_flight[1].extras.uniform->dst_buffer,
+                    .type = vk::DescriptorType::eAccelerationStructureKHR,
+                    .stages = vk::ShaderStageFlagBits::eRaygenKHR,
+                    .value = DescriptorBinding::AccelStructuresValue{{
+                        .accel_structures = {{**tlas}},
+                    }},
                 },
-            }},
-        },
-    }});
+                {
+                    .type = vk::DescriptorType::eStorageImage,
+                    .stages = vk::ShaderStageFlagBits::eRaygenKHR,
+                    .value =
+                        DescriptorBinding::CombinedImageSamplersValue{
+                            {
+                                .images = {{
+                                    .image = *pp_frames->frames_in_flight[0].extras.image_view,
+                                    .layout = vk::ImageLayout::eGeneral,
+                                }},
+                            },
+                            {
+                                .images = {{
+                                    .image = *pp_frames->frames_in_flight[1].extras.image_view,
+                                    .layout = vk::ImageLayout::eGeneral,
+                                }},
+                            },
+                        },
+                },
+                {
+                    .type = vk::DescriptorType::eUniformBuffer,
+                    .stages = vk::ShaderStageFlagBits::eRaygenKHR,
+                    .value =
+                        DescriptorBinding::BuffersValue{
+                            {.buffers =
+                                 {{*frames->frames_in_flight[0].extras.uniform->dst_buffer}}},
+                            {.buffers =
+                                 {{*frames->frames_in_flight[1].extras.uniform->dst_buffer}}},
+                        },
+                },
+            });
 
     pipeline = std::make_unique<VulkanRayTracingPipeline>(
         *device,
@@ -225,9 +238,31 @@ void VulkanPathTracerHW::Init(vk::SurfaceKHR surface, const vk::Extent2D& actual
                 }),
             }},
         },
-        frames->CreatePipelineLayout({
-            PushConstant<glm::mat4>(vk::ShaderStageFlagBits::eRaygenKHR),
-        }));
+        vk::PipelineLayoutCreateInfo{
+            .setLayoutCount = 1,
+            .pSetLayouts = &*descriptor_sets->descriptor_set_layout,
+        });
+}
+
+void VulkanPathTracerHW::LoadScene(GLTF::Container& gltf) {
+    scene = std::make_unique<Scene>();
+
+    SceneLoader loader{
+        {
+            .usage = vk::BufferUsageFlagBits::eAccelerationStructureBuildInputReadOnlyKHR |
+                     vk::BufferUsageFlagBits::eShaderDeviceAddress,
+            .dst_stage_mask = vk::PipelineStageFlagBits2::eAccelerationStructureBuildKHR,
+            .dst_access_mask = vk::AccessFlagBits2::eShaderRead,
+        },
+        {
+            .usage = vk::BufferUsageFlagBits::eAccelerationStructureBuildInputReadOnlyKHR |
+                     vk::BufferUsageFlagBits::eShaderDeviceAddress,
+            .dst_stage_mask = vk::PipelineStageFlagBits2::eAccelerationStructureBuildKHR,
+            .dst_access_mask = vk::AccessFlagBits2::eShaderRead,
+        },
+        *scene,
+        *device,
+        gltf};
 }
 
 GLSL::PathTracerUBOBlock VulkanPathTracerHW::GetUniformBufferObject() const {
@@ -256,7 +291,7 @@ void VulkanPathTracerHW::DrawFrame() {
     frame.extras.uniform->Upload(cmd);
     cmd.bindPipeline(vk::PipelineBindPoint::eRayTracingKHR, **pipeline);
     cmd.bindDescriptorSets(vk::PipelineBindPoint::eRayTracingKHR, *pipeline->pipeline_layout, 0,
-                           frames->GetDescriptorSets(), {});
+                           descriptor_sets->descriptor_sets[frame.idx], {});
     pipeline->TraceRays(cmd, swap_chain->extent.width, swap_chain->extent.height, 1);
 
     frames->EndFrame();
@@ -274,20 +309,21 @@ void VulkanPathTracerHW::DrawFrame() {
 
 void VulkanPathTracerHW::OnResized(const vk::Extent2D& actual_extent) {
     VulkanRenderer::OnResized(actual_extent);
-    frames->UpdateDescriptor(0, 1,
-                             {
-                                 .type = vk::DescriptorType::eStorageImage,
-                                 .count = 1,
-                                 .stages = vk::ShaderStageFlagBits::eRaygenKHR,
-                                 .images = {{
-                                     .images =
-                                         {
-                                             *pp_frames->frames_in_flight[0].extras.image_view,
-                                             *pp_frames->frames_in_flight[1].extras.image_view,
-                                         },
-                                     .layout = vk::ImageLayout::eGeneral,
-                                 }},
-                             });
+    descriptor_sets->UpdateDescriptor(
+        1, DescriptorBinding::CombinedImageSamplersValue{
+               {
+                   .images = {{
+                       .image = *pp_frames->frames_in_flight[0].extras.image_view,
+                       .layout = vk::ImageLayout::eGeneral,
+                   }},
+               },
+               {
+                   .images = {{
+                       .image = *pp_frames->frames_in_flight[1].extras.image_view,
+                       .layout = vk::ImageLayout::eGeneral,
+                   }},
+               },
+           });
 }
 
 } // namespace Renderer

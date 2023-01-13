@@ -1,5 +1,7 @@
 add_library(core STATIC
     gltf/gltf.h
+    gltf/gltf_container.cpp
+    gltf/gltf_container.h
     gltf/json_helpers.hpp
     gltf/simdjson.h
     path_tracer_hw/vulkan_path_tracer_hw.cpp
@@ -19,6 +21,8 @@ add_library(core STATIC
     vulkan/vulkan_buffer.h
     vulkan/vulkan_context.cpp
     vulkan/vulkan_context.h
+    vulkan/vulkan_descriptor_sets.cpp
+    vulkan/vulkan_descriptor_sets.h
     vulkan/vulkan_device.cpp
     vulkan/vulkan_device.h
     vulkan/vulkan_frames_in_flight.hpp
@@ -51,5 +55,5 @@ target_shaders(core
     shaders/postprocessing.vert
 )
 
-target_link_libraries(core PUBLIC common boost glm::glm Vulkan::Vulkan VulkanMemoryAllocator)
-target_link_libraries(core PRIVATE base64 cityhash simdjson spdlog stb_image)
+target_link_libraries(core PUBLIC common boost glm::glm simdjson spdlog Vulkan::Vulkan VulkanMemoryAllocator)
+target_link_libraries(core PRIVATE base64 cityhash stb_image)

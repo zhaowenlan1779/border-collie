@@ -11,6 +11,7 @@
 #include <spdlog/spdlog.h>
 #include "common/assert.h"
 #include "common/ranges.h"
+#include "core/gltf/gltf_container.h"
 #include "core/gltf/json_helpers.hpp"
 #include "core/scene.h"
 #include "core/vulkan/vulkan_buffer.h"
@@ -22,8 +23,18 @@ namespace Renderer {
 BufferFile::BufferFile(const std::string_view& uri) {
     Load(uri);
 }
-BufferFile::BufferFile([[maybe_unused]] const SceneLoader& loader, const GLTF::Buffer& buffer) {
-    Load(*buffer.uri);
+BufferFile::BufferFile(SceneLoader& loader, const GLTF::Buffer& buffer) {
+    if (buffer.uri.has_value()) {
+        Load(*buffer.uri);
+    } else if (loader.container.extra_buffer_file.has_value()) {
+        // There should only be one such buffer
+        file = std::move(*loader.container.extra_buffer_file);
+        offset = loader.container.extra_buffer_offset;
+        loader.container.extra_buffer_file.reset();
+    } else {
+        SPDLOG_ERROR("No URI but no GLB buffer either");
+        throw std::runtime_error("No URI but no GLB buffer either");
+    }
 }
 BufferFile::~BufferFile() = default;
 
@@ -114,10 +125,11 @@ CPUAccessor::~CPUAccessor() = default;
 
 GPUAccessor::GPUAccessor(SceneLoader& loader, const GLTF::Accessor& accessor,
                          const BufferParams& params)
-    : name(accessor.name.value_or("Unnamed")) {
+    : name(accessor.name.value_or("Unnamed")), component_type(accessor.component_type),
+      type(accessor.type), count(accessor.count) {
 
-    const auto total_size = GetComponentSize(accessor.component_type) *
-                            GLTF::GetComponentCount(accessor.type) * accessor.count;
+    const auto total_size =
+        GetComponentSize(component_type) * GLTF::GetComponentCount(type) * count;
     if (accessor.buffer_view.has_value()) {
         const auto& buffer_view = loader.gltf.buffer_views[*accessor.buffer_view];
         auto& buffer_file = *loader.buffer_files.Get(loader, buffer_view.buffer);
@@ -164,7 +176,7 @@ void StridedBufferView::Load(SceneLoader& loader) {
         buffer_file.Seek(buffer_view.byte_offset + chunk.lower() * byte_stride);
         buffers.emplace(
             chunk.lower(),
-            std::make_unique<VulkanImmUploadBuffer>(
+            std::make_shared<VulkanImmUploadBuffer>(
                 loader.device,
                 VulkanBufferCreateInfo{
                     .size = (chunk.upper() - chunk.lower()) * byte_stride,
@@ -186,29 +198,11 @@ StridedBufferView::BufferInfo StridedBufferView::GetAccessorBufferInfo(
     const auto iter = chunks.find(start);
     ASSERT_MSG(iter != chunks.end(), "Failed to find interval containing accessor");
     return {
-        .buffer = *buffers.at(iter->lower()),
+        .buffer = buffers.at(iter->lower()),
         .buffer_offset = buffer_view.byte_offset + (start - iter->lower()) * byte_stride,
         .attribute_offset = attribute_offset,
     };
 }
-
-Sampler::Sampler(const SceneLoader& loader)
-    : name("Default"),
-      uses_mipmaps(true), sampler{*loader.device,
-                                  vk::SamplerCreateInfo{
-                                      .magFilter = vk::Filter::eLinear,
-                                      .minFilter = vk::Filter::eLinear,
-                                      .mipmapMode = vk::SamplerMipmapMode::eLinear,
-                                      .addressModeU = vk::SamplerAddressMode::eRepeat,
-                                      .addressModeV = vk::SamplerAddressMode::eRepeat,
-                                      .mipLodBias = 0.0f,
-                                      .anisotropyEnable = VK_TRUE,
-                                      .maxAnisotropy = loader.device.physical_device.getProperties()
-                                                           .limits.maxSamplerAnisotropy,
-                                      .minLod = 0.0f,
-                                      .maxLod = 0.0f,
-                                      .borderColor = vk::BorderColor::eIntOpaqueBlack,
-                                  }} {}
 
 Sampler::Sampler(const SceneLoader& loader, const GLTF::Sampler& sampler)
     : name(sampler.name.value_or("Unnamed")), uses_mipmaps(IsMipmapUsed(sampler.min_filter)),
@@ -252,9 +246,11 @@ Image::Image(SceneLoader& loader, const GLTF::Image& image) : name(image.name.va
 Image::~Image() = default;
 
 Texture::Texture(SceneLoader& loader, const GLTF::Texture& texture)
-    : name(texture.name.value_or("Unnamed")), image(loader.images.Get(loader, texture.source)),
-      sampler(texture.sampler.has_value() ? loader.samplers.Get(loader, *texture.sampler)
-                                          : loader.scene.default_sampler) {}
+    : name(texture.name.value_or("Unnamed")), image(loader.images.Get(loader, texture.source)) {
+    if (texture.sampler.has_value()) {
+        sampler = loader.samplers.Get(loader, *texture.sampler);
+    }
+}
 Texture::~Texture() = default;
 
 Material::Material(SceneLoader& loader, const GLTF::Material& material)
@@ -342,35 +338,57 @@ void MeshPrimitive::Load(SceneLoader& loader) {
     }
 
     // Keep note of all the buffers we'll use
-    std::map<vk::Buffer, u32> binding_index_map;
+    // (buffer, buffer_offset) -> binding
+    std::map<std::pair<vk::Buffer, std::size_t>, u32> binding_index_map;
     const auto GetBindingIndex =
         [this, &binding_index_map](const StridedBufferView::BufferInfo& info, std::size_t stride) {
-            if (!binding_index_map.count(*info.buffer)) {
-                bindings.emplace_back(VertexInputBinding{
-                    .description =
-                        {
-                            .binding = static_cast<u32>(bindings.size()),
-                            .stride = static_cast<u32>(stride),
-                            .inputRate = vk::VertexInputRate::eVertex,
-                        },
-                    .buffer = *info.buffer,
-                    .offset = info.buffer_offset,
+            if (!binding_index_map.count({**info.buffer, info.buffer_offset})) {
+                bindings.emplace_back(vk::VertexInputBindingDescription2EXT{
+                    .binding = static_cast<u32>(bindings.size()),
+                    .stride = static_cast<u32>(stride),
+                    .inputRate = vk::VertexInputRate::eVertex,
+                    .divisor = 1,
                 });
-                binding_index_map.emplace(*info.buffer, static_cast<u32>(bindings.size() - 1));
+                vertex_buffers.emplace_back(info.buffer);
+                raw_vertex_buffers.emplace_back(**info.buffer);
+                vertex_buffer_offsets.emplace_back(info.buffer_offset);
+                binding_index_map.emplace(std::make_pair(**info.buffer, info.buffer_offset),
+                                          static_cast<u32>(bindings.size() - 1));
             }
-            return binding_index_map.at(*info.buffer);
+            return binding_index_map.at({**info.buffer, info.buffer_offset});
         };
 
-    const std::array<std::optional<std::size_t>, 5> attribute_accessors{{
-        primitive.attributes.position,
-        primitive.attributes.normal,
-        primitive.attributes.texcoord_0,
-        primitive.attributes.texcoord_1,
-        primitive.attributes.color_0,
+    // accessor, default format
+    const std::array<std::pair<std::optional<std::size_t>, vk::Format>, 5> attribute_accessors{{
+        {primitive.attributes.position, vk::Format::eR32G32B32Sfloat},
+        {primitive.attributes.normal, vk::Format::eR32G32B32Sfloat},
+        {primitive.attributes.texcoord_0, vk::Format::eR32G32Sfloat},
+        {primitive.attributes.texcoord_1, vk::Format::eR32G32Sfloat},
+        {primitive.attributes.color_0, vk::Format::eR32G32B32A32Sfloat},
     }};
+
+    int null_binding_idx = -1;
     for (std::size_t i = 0; i < attribute_accessors.size(); ++i) {
-        const auto& accessor_idx = attribute_accessors[i];
+        const auto& [accessor_idx, default_format] = attribute_accessors[i];
         if (!accessor_idx.has_value()) {
+            if (null_binding_idx == -1) {
+                // Create a null binding
+                bindings.emplace_back(vk::VertexInputBindingDescription2EXT{
+                    .binding = static_cast<u32>(bindings.size()),
+                    .stride = 0,
+                    .inputRate = vk::VertexInputRate::eVertex,
+                    .divisor = 1,
+                });
+                raw_vertex_buffers.emplace_back(VK_NULL_HANDLE);
+                vertex_buffer_offsets.emplace_back(0);
+                null_binding_idx = bindings.size() - 1;
+            }
+            attributes.emplace_back(vk::VertexInputAttributeDescription2EXT{
+                .location = static_cast<u32>(i),
+                .binding = static_cast<u32>(null_binding_idx),
+                .format = default_format,
+                .offset = 0,
+            });
             continue;
         }
 
@@ -389,17 +407,20 @@ void MeshPrimitive::Load(SceneLoader& loader) {
                 GetBindingIndex(info, *loader.gltf.buffer_views[*accessor.buffer_view].byte_stride);
             attribute_offset = static_cast<u32>(info.attribute_offset);
         } else {
-            binding = GetBindingIndex(
-                {
-                    .buffer = *loader.gpu_accessors
-                                   .Get(loader, *accessor_idx, loader.vertex_buffer_params)
-                                   ->gpu_buffer,
-                    .buffer_offset = 0,
-                    .attribute_offset = 0,
-                },
-                GetComponentSize(accessor.component_type) * GLTF::GetComponentCount(accessor.type));
+            const auto stride =
+                GetComponentSize(accessor.component_type) * GLTF::GetComponentCount(accessor.type);
+            bindings.emplace_back(vk::VertexInputBindingDescription2EXT{
+                .binding = static_cast<u32>(bindings.size()),
+                .stride = static_cast<u32>(stride),
+                .inputRate = vk::VertexInputRate::eVertex,
+                .divisor = 1,
+            });
+            raw_vertex_buffers.emplace_back(
+                **loader.gpu_accessors.Get(loader, *accessor_idx, loader.vertex_buffer_params)
+                      ->gpu_buffer);
+            vertex_buffer_offsets.emplace_back(0);
         }
-        attributes.emplace_back(vk::VertexInputAttributeDescription{
+        attributes.emplace_back(vk::VertexInputAttributeDescription2EXT{
             .location = static_cast<u32>(i),
             .binding = binding,
             .format = GLTF::GetVertexInputFormat(accessor.component_type, accessor.type,
@@ -517,11 +538,11 @@ static std::pair<long, long> ParseVersion(const std::string_view& str) {
 
 SceneLoader::SceneLoader(const BufferParams& vertex_buffer_params_,
                          const BufferParams& index_buffer_params_, Scene& scene_,
-                         VulkanDevice& device_, simdjson::ondemand::document& json_)
+                         VulkanDevice& device_, GLTF::Container& container_)
     : vertex_buffer_params(vertex_buffer_params_), index_buffer_params(index_buffer_params_),
-      scene(scene_), device(device_), json(json_) {
+      scene(scene_), device(device_), container(container_) {
 
-    gltf = JSON::Deserialize<GLTF::GLTF>(json.get_value());
+    gltf = JSON::Deserialize<GLTF::GLTF>(container.json.get_value());
 
     // Check GLTF version
     if (gltf.asset.min_version.has_value()) {
@@ -540,8 +561,6 @@ SceneLoader::SceneLoader(const BufferParams& vertex_buffer_params_,
             throw std::runtime_error("Version unsupported");
         }
     }
-
-    scene.default_sampler = std::make_unique<Sampler>(*this);
 
     // Load scenes
     for (const auto& sub_scene : gltf.scenes) {

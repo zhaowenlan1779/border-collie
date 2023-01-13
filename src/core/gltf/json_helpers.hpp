@@ -63,8 +63,8 @@ DeserializeValue(T& out, simdjson::simdjson_result<simdjson::ondemand::value> js
 }
 
 template <>
-bool DeserializeValue(std::string_view& out,
-                      simdjson::simdjson_result<simdjson::ondemand::value> json) {
+inline bool DeserializeValue(std::string_view& out,
+                             simdjson::simdjson_result<simdjson::ondemand::value> json) {
     return !json.get(out);
 }
 

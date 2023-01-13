@@ -3,10 +3,11 @@
 // Refer to the license.txt file included.
 
 #include <array>
-#include <spdlog/spdlog.h>
 #include "common/temp_ptr.h"
+#include "core/scene.h"
 #include "core/vulkan/vulkan_allocator.h"
 #include "core/vulkan/vulkan_context.h"
+#include "core/vulkan/vulkan_descriptor_sets.h"
 #include "core/vulkan/vulkan_device.h"
 #include "core/vulkan/vulkan_frames_in_flight.hpp"
 #include "core/vulkan/vulkan_graphics_pipeline.h"
@@ -42,26 +43,7 @@ void VulkanRenderer::Init(vk::SurfaceKHR surface, const vk::Extent2D& actual_ext
     swap_chain = std::make_unique<VulkanSwapchain>(*device, actual_extent);
 
     pp_frames = std::make_unique<VulkanFramesInFlight<OffscreenFrame, 2>>(*device);
-
     CreateRenderTargets();
-    pp_frames->CreateDescriptors({{
-        {
-            .type = vk::DescriptorType::eCombinedImageSampler,
-            .count = 1,
-            .stages = vk::ShaderStageFlagBits::eFragment,
-            .images =
-                {
-                    {
-                        .images =
-                            {
-                                *pp_frames->frames_in_flight[0].extras.image_view,
-                                *pp_frames->frames_in_flight[1].extras.image_view,
-                            },
-                        .layout = vk::ImageLayout::eGeneral,
-                    },
-                },
-        },
-    }});
 
     pp_render_pass = vk::raii::RenderPass{
         **device,
@@ -95,6 +77,29 @@ void VulkanRenderer::Init(vk::SurfaceKHR surface, const vk::Extent2D& actual_ext
             }},
         }};
 
+    swap_chain->CreateFramebuffers(pp_render_pass);
+
+    pp_descriptor_sets = std::make_unique<VulkanDescriptorSets>(
+        *device, 2,
+        DescriptorBinding{
+            .type = vk::DescriptorType::eCombinedImageSampler,
+            .stages = vk::ShaderStageFlagBits::eFragment,
+            .value =
+                DescriptorBinding::CombinedImageSamplersValue{
+                    {
+                        .images = {{
+                            .image = *pp_frames->frames_in_flight[0].extras.image_view,
+                            .layout = vk::ImageLayout::eGeneral,
+                        }},
+                    },
+                    {
+                        .images = {{
+                            .image = *pp_frames->frames_in_flight[1].extras.image_view,
+                            .layout = vk::ImageLayout::eGeneral,
+                        }},
+                    },
+                },
+        });
     pp_pipeline = std::make_unique<VulkanGraphicsPipeline>(
         *device,
         vk::GraphicsPipelineCreateInfo{
@@ -117,11 +122,10 @@ void VulkanRenderer::Init(vk::SurfaceKHR surface, const vk::Extent2D& actual_ext
             }},
             .renderPass = *pp_render_pass,
         },
-        pp_frames->CreatePipelineLayout({
-            PushConstant<glm::mat4>(vk::ShaderStageFlagBits::eVertex),
-        }));
-
-    swap_chain->CreateFramebuffers(pp_render_pass);
+        vk::PipelineLayoutCreateInfo{
+            .setLayoutCount = 1,
+            .pSetLayouts = &*pp_descriptor_sets->descriptor_set_layout,
+        });
 }
 
 void VulkanRenderer::CreateRenderTargets() {
@@ -190,7 +194,7 @@ void VulkanRenderer::PostprocessAndPresent(vk::Semaphore offscreen_render_finish
                                       });
     cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, **pp_pipeline);
     cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *pp_pipeline->pipeline_layout, 0,
-                           pp_frames->GetDescriptorSets(), {});
+                           pp_descriptor_sets->descriptor_sets[frame.idx], {});
     cmd.draw(3, 1, 0, 0);
     pp_pipeline->EndRenderPass(cmd);
 
@@ -225,19 +229,21 @@ void VulkanRenderer::OnResized(const vk::Extent2D& actual_extent) {
     swap_chain->CreateFramebuffers(pp_render_pass);
 
     CreateRenderTargets();
-    pp_frames->UpdateDescriptor(0, 0,
-                                {
-                                    .type = vk::DescriptorType::eCombinedImageSampler,
-                                    .count = 1,
-                                    .images = {{
-                                        .images =
-                                            {
-                                                *pp_frames->frames_in_flight[0].extras.image_view,
-                                                *pp_frames->frames_in_flight[1].extras.image_view,
-                                            },
-                                        .layout = vk::ImageLayout::eGeneral,
-                                    }},
-                                });
+    pp_descriptor_sets->UpdateDescriptor(
+        0, DescriptorBinding::CombinedImageSamplersValue{
+               {
+                   .images = {{
+                       .image = *pp_frames->frames_in_flight[0].extras.image_view,
+                       .layout = vk::ImageLayout::eGeneral,
+                   }},
+               },
+               {
+                   .images = {{
+                       .image = *pp_frames->frames_in_flight[1].extras.image_view,
+                       .layout = vk::ImageLayout::eGeneral,
+                   }},
+               },
+           });
 }
 
 } // namespace Renderer

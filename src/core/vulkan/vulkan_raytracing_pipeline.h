@@ -35,7 +35,7 @@ class VulkanRayTracingPipeline : NonCopyable {
 public:
     explicit VulkanRayTracingPipeline(const VulkanDevice& device,
                                       vk::RayTracingPipelineCreateInfoKHR create_info,
-                                      vk::raii::PipelineLayout pipeline_layout);
+                                      vk::PipelineLayoutCreateInfo pipeline_layout_info);
     ~VulkanRayTracingPipeline();
 
     vk::Pipeline operator*() const noexcept {

@@ -22,6 +22,7 @@ class VulkanUniformBufferObject;
 namespace GLSL {
 struct PathTracerUBOBlock;
 }
+class VulkanDescriptorSets;
 
 class VulkanPathTracerHW : public VulkanRenderer {
 public:
@@ -30,6 +31,7 @@ public:
     ~VulkanPathTracerHW() override;
 
     void Init(vk::SurfaceKHR surface, const vk::Extent2D& actual_extent) override;
+    void LoadScene(GLTF::Container& gltf) override;
     void DrawFrame() override;
     void OnResized(const vk::Extent2D& actual_extent) override;
 
@@ -49,6 +51,7 @@ private:
         std::unique_ptr<VulkanUniformBufferObject<GLSL::PathTracerUBOBlock>> uniform{};
     };
     std::unique_ptr<VulkanFramesInFlight<Frame, 2>> frames;
+    std::unique_ptr<VulkanDescriptorSets> descriptor_sets;
     std::unique_ptr<VulkanRayTracingPipeline> pipeline;
 };
 

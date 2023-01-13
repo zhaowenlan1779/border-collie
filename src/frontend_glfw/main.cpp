@@ -14,6 +14,7 @@
 #include "common/common_types.h"
 #include "common/log.h"
 #include "common/scope_exit.h"
+#include "core/gltf/gltf_container.h"
 #include "core/path_tracer_hw/vulkan_path_tracer_hw.h"
 #include "core/rasterizer/vulkan_rasterizer.h"
 
@@ -60,6 +61,14 @@ int main() {
     }
 
     renderer.Init(surface, vk::Extent2D{800, 600});
+
+    try {
+        GLTF::Container gltf(u8"scene.gltf");
+        renderer.LoadScene(gltf);
+    } catch (std::exception& e) {
+        SPDLOG_ERROR("Failed to load glTF scene: {}", e.what());
+        return 1;
+    }
 
     glfwSetWindowUserPointer(window, &renderer);
     glfwSetFramebufferSizeCallback(window, &OnFramebufferResized);

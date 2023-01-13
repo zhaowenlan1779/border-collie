@@ -17,8 +17,11 @@
 #include "common/common_types.h"
 #include "common/pfr_helper.hpp"
 #include "core/gltf/gltf.h"
-#include "core/gltf/simdjson.h"
 #include "core/shaders/scene_glsl.h"
+
+namespace GLTF {
+class Container;
+}
 
 namespace Renderer {
 
@@ -31,7 +34,7 @@ class SceneLoader;
 class BufferFile : NonCopyable {
 public:
     explicit BufferFile(const std::string_view& uri);
-    explicit BufferFile(const SceneLoader& loader, const GLTF::Buffer& buffer);
+    explicit BufferFile(SceneLoader& loader, const GLTF::Buffer& buffer);
     ~BufferFile();
 
     void Load(const std::string_view& uri);
@@ -43,6 +46,7 @@ public:
     std::size_t file_size = 0;
 
     std::ifstream file;
+    std::size_t offset = 0;
 };
 
 // Buffer views used for anything but vertex attributes can only have one accessor.
@@ -65,6 +69,9 @@ class GPUAccessor : NonCopyable {
 public:
     std::string name;
     std::unique_ptr<VulkanBuffer> gpu_buffer;
+    GLTF::Accessor::ComponentType component_type{};
+    std::string type;
+    std::size_t count{};
 
     explicit GPUAccessor(SceneLoader& loader, const GLTF::Accessor& accessor,
                          const BufferParams& params);
@@ -84,7 +91,7 @@ public:
     void Load(SceneLoader& loader);
 
     struct BufferInfo {
-        const VulkanBuffer& buffer;
+        const std::shared_ptr<VulkanBuffer>& buffer;
         std::size_t buffer_offset{};
         std::size_t attribute_offset{};
     };
@@ -95,7 +102,7 @@ private:
     const GLTF::BufferView& buffer_view;
     boost::icl::interval_set<std::size_t> chunks;
     // Interval start element -> buffer
-    std::unordered_map<std::size_t, std::unique_ptr<VulkanBuffer>> buffers;
+    std::unordered_map<std::size_t, std::shared_ptr<VulkanBuffer>> buffers;
 };
 
 class Sampler : NonCopyable {
@@ -104,7 +111,6 @@ public:
     bool uses_mipmaps{};
     vk::raii::Sampler sampler = nullptr;
 
-    explicit Sampler(const SceneLoader& loader); // Default sampler
     explicit Sampler(const SceneLoader& loader, const GLTF::Sampler& sampler);
     ~Sampler();
 };
@@ -141,13 +147,11 @@ class MeshPrimitive : NonCopyable {
 public:
     int material = -1;
 
-    std::vector<vk::VertexInputAttributeDescription> attributes;
-    struct VertexInputBinding {
-        vk::VertexInputBindingDescription description{};
-        vk::Buffer buffer{};
-        std::size_t offset{};
-    };
-    std::vector<VertexInputBinding> bindings;
+    std::vector<vk::VertexInputAttributeDescription2EXT> attributes;
+    std::vector<vk::VertexInputBindingDescription2EXT> bindings;
+    std::vector<std::shared_ptr<VulkanBuffer>> vertex_buffers;
+    std::vector<vk::Buffer> raw_vertex_buffers;
+    std::vector<std::size_t> vertex_buffer_offsets;
 
     std::shared_ptr<GPUAccessor> index_buffer;
 
@@ -208,7 +212,6 @@ private:
 };
 
 struct Scene {
-    std::shared_ptr<Sampler> default_sampler;
     std::vector<std::unique_ptr<Texture>> textures;
     std::vector<std::unique_ptr<Material>> materials;
     std::vector<std::unique_ptr<SubScene>> sub_scenes;
@@ -219,7 +222,7 @@ class SceneLoader {
 public:
     explicit SceneLoader(const BufferParams& vertex_buffer_params,
                          const BufferParams& index_buffer_params, Scene& scene,
-                         VulkanDevice& device, simdjson::ondemand::document& json);
+                         VulkanDevice& device, GLTF::Container& container);
     ~SceneLoader();
 
     BufferParams vertex_buffer_params;
@@ -227,7 +230,7 @@ public:
 
     Scene& scene;
     VulkanDevice& device;
-    simdjson::ondemand::document& json;
+    GLTF::Container& container;
     GLTF::GLTF gltf;
 
     // Temporary maps used while loading to avoid loading the same resource multiple times

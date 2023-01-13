@@ -7,7 +7,6 @@
 #include <map>
 #include <string_view>
 #include <vulkan/vulkan.hpp>
-#include "common/assert.h"
 #include "core/gltf/json_helpers.hpp"
 
 namespace GLTF {
@@ -56,8 +55,10 @@ constexpr std::size_t GetComponentSize(Accessor::ComponentType component_type) {
     case Accessor::ComponentType::UnsignedInt:
     case Accessor::ComponentType::Float:
         return 4;
+    default:
+        SPDLOG_ERROR("Invalid component type {}", static_cast<int>(component_type));
+        throw std::runtime_error("Invalid accessor component type");
     }
-    UNREACHABLE();
 }
 
 constexpr std::size_t GetComponentCount(const std::string_view& type) {
@@ -76,10 +77,11 @@ constexpr std::size_t GetComponentCount(const std::string_view& type) {
     } else if (type == "MAT4") {
         return 16;
     }
-    UNREACHABLE();
+    SPDLOG_ERROR("Invalid type {}", type);
+    throw std::runtime_error("Invalid accessor type");
 }
 
-static vk::Format GetVertexInputFormat(Accessor::ComponentType component_type,
+inline vk::Format GetVertexInputFormat(Accessor::ComponentType component_type,
                                        const std::string_view& type, bool normalized) {
     static const std::map<std::pair<Accessor::ComponentType, std::string_view>, vk::Format>
         FormatMap{
@@ -104,11 +106,29 @@ static vk::Format GetVertexInputFormat(Accessor::ComponentType component_type,
             {{Accessor::ComponentType::UnsignedShort, "VEC4"}, vk::Format::eR16G16B16A16Unorm},
             {{Accessor::ComponentType::Float, "VEC4"}, vk::Format::eR32G32B32A32Sfloat},
         };
-    ASSERT_MSG(FormatMap.count({component_type, type}), "Invalid vertex input accessor {} {}",
-               static_cast<int>(component_type), type);
-    ASSERT_MSG(component_type == Accessor::ComponentType::Float || normalized,
-               "Integer vertex input accessors must be normalized");
+    if (!FormatMap.count({component_type, type})) {
+        SPDLOG_ERROR("Invalid vertex input accessor {} {}", static_cast<int>(component_type), type);
+        throw std::runtime_error("Invalid vertex input accessor");
+    }
+    if (component_type != Accessor::ComponentType::Float && !normalized) {
+        SPDLOG_ERROR("Integer vertex input accessors must be normalized");
+        throw std::runtime_error("Integer vertex input accessors must be normalized");
+    }
     return FormatMap.at({component_type, type});
+}
+
+constexpr vk::IndexType GetIndexType(Accessor::ComponentType component_type) {
+    switch (component_type) {
+    case Accessor::ComponentType::UnsignedShort:
+        return vk::IndexType::eUint16;
+    case Accessor::ComponentType::UnsignedInt:
+        return vk::IndexType::eUint32;
+    default:
+        // TODO: uint8 (requires an extension)
+        SPDLOG_ERROR("Invalid component type for index buffer {}",
+                     static_cast<int>(component_type));
+        throw std::runtime_error("Invalid component type for index buffer {}");
+    }
 }
 
 struct Sampler {
@@ -144,8 +164,10 @@ constexpr vk::Filter ToVkFilter(Sampler::Filter filter) {
     case Sampler::Filter::NearestMipmapLinear:
     case Sampler::Filter::LinearMipmapLinear:
         return vk::Filter::eLinear;
+    default:
+        SPDLOG_ERROR("Invalid filter {}", static_cast<int>(filter));
+        throw std::runtime_error("Invalid filter");
     }
-    UNREACHABLE();
 }
 
 constexpr bool IsMipmapUsed(Sampler::Filter filter) {
@@ -158,8 +180,10 @@ constexpr bool IsMipmapUsed(Sampler::Filter filter) {
     case Sampler::Filter::NearestMipmapLinear:
     case Sampler::Filter::LinearMipmapLinear:
         return true;
+    default:
+        SPDLOG_ERROR("Invalid filter {}", static_cast<int>(filter));
+        throw std::runtime_error("Invalid filter");
     }
-    UNREACHABLE();
 }
 
 constexpr vk::SamplerMipmapMode GetMipmapMode(Sampler::Filter filter) {
@@ -183,8 +207,10 @@ constexpr vk::SamplerAddressMode ToAddressMode(Sampler::Wrap wrap) {
         return vk::SamplerAddressMode::eMirroredRepeat;
     case Sampler::Wrap::Repeat:
         return vk::SamplerAddressMode::eRepeat;
+    default:
+        SPDLOG_ERROR("Invalid wrap {}", static_cast<int>(wrap));
+        throw std::runtime_error("Invalid wrap");
     }
-    UNREACHABLE();
 }
 
 struct Image {

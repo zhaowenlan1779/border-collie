@@ -10,6 +10,10 @@
 #include <vulkan/vulkan_raii.hpp>
 #include "common/common_types.h"
 
+namespace GLTF {
+class Container;
+}
+
 namespace Renderer {
 
 class VulkanContext;
@@ -17,9 +21,11 @@ class VulkanDevice;
 class VulkanImage;
 class VulkanGraphicsPipeline;
 class VulkanSwapchain;
-
+class VulkanDescriptorSets;
 template <typename ExtraData, std::size_t NumFramesInFlight>
 class VulkanFramesInFlight;
+
+class Scene;
 
 /**
  * Base class for Vulkan based renderers.
@@ -36,6 +42,7 @@ public:
     const vk::raii::Instance& GetVulkanInstance() const;
 
     virtual void Init(vk::SurfaceKHR surface, const vk::Extent2D& actual_extent);
+    virtual void LoadScene(GLTF::Container& gltf) = 0;
     virtual void DrawFrame() = 0;
     virtual void OnResized(const vk::Extent2D& actual_extent);
 
@@ -58,6 +65,7 @@ protected:
     std::unique_ptr<VulkanSwapchain> swap_chain;
     vk::raii::RenderPass pp_render_pass = nullptr;
 
+    std::unique_ptr<VulkanDescriptorSets> pp_descriptor_sets;
     struct OffscreenFrame {
         vk::raii::Semaphore render_start_semaphore = nullptr;
         std::unique_ptr<VulkanImage> image;
@@ -65,6 +73,8 @@ protected:
     };
     std::unique_ptr<VulkanFramesInFlight<OffscreenFrame, 2>> pp_frames;
     std::unique_ptr<VulkanGraphicsPipeline> pp_pipeline;
+
+    std::unique_ptr<Scene> scene;
 };
 
 } // namespace Renderer

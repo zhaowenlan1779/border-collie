@@ -1,13 +1,17 @@
 # Project Border Collie
 IIIS 2022 Fall: Advanced Computer Graphics - Final Project, by Pengfei Zhu.
 
-## Goals
-* Fully functional glTF renderer with support for official and (potentially) custom extensions
-    * Path tracer, can use HW acceleration if available.
-* (If time permits) Simple glTF editor
+## Requirements
+Vulkan Core 1.3 and the following extensions:
+* Rasterizer: `VK_EXT_vertex_input_dynamic_state`, `VK_EXT_robustness2`
+* Path tracer: `VK_KHR_acceleration_structure`, `VK_KHR_ray_tracing_pipeline`, `VK_KHR_deferred_host_operations`
+
+## Features
+* glTF Renderer with simple rasterizer (for debug use) and full-feature path tracer (TODO)
+* Custom materials, etc (TODO)
 
 ## Building
-The build system is CMake. Requires the Vulkan SDK to be installed. Targets Vulkan 1.3, Windows / Linux.
+The build system is CMake. The only system dependency is the Vulkan SDK; everything else is provided for with submodules.
 
 C++20 features are heavily used, so this requires a C++20-capable compiler. Clang does not work because `ranges` is broken (as of now), but GCC and MSVC seem fine.
 

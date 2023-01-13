@@ -11,10 +11,11 @@
 
 namespace Renderer {
 
-VulkanRayTracingPipeline::VulkanRayTracingPipeline(const VulkanDevice& device,
-                                                   vk::RayTracingPipelineCreateInfoKHR create_info,
-                                                   vk::raii::PipelineLayout pipeline_layout_)
-    : pipeline_layout(std::move(pipeline_layout_)) {
+VulkanRayTracingPipeline::VulkanRayTracingPipeline(
+    const VulkanDevice& device, vk::RayTracingPipelineCreateInfoKHR create_info,
+    vk::PipelineLayoutCreateInfo pipeline_layout_info) {
+
+    pipeline_layout = vk::raii::PipelineLayout{*device, pipeline_layout_info};
 
     create_info.layout = *pipeline_layout;
     pipeline = vk::raii::Pipeline{*device, nullptr, device.pipeline_cache, create_info};

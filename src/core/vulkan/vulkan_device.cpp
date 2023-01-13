@@ -112,6 +112,21 @@ bool VulkanDevice::CreateDevice(
 
     allocator = std::make_unique<VulkanAllocator>(instance, *this);
 
+    default_sampler = vk::raii::Sampler{
+        device, vk::SamplerCreateInfo{
+                    .magFilter = vk::Filter::eLinear,
+                    .minFilter = vk::Filter::eLinear,
+                    .mipmapMode = vk::SamplerMipmapMode::eLinear,
+                    .addressModeU = vk::SamplerAddressMode::eRepeat,
+                    .addressModeV = vk::SamplerAddressMode::eRepeat,
+                    .mipLodBias = 0.0f,
+                    .anisotropyEnable = VK_TRUE,
+                    .maxAnisotropy = physical_device.getProperties().limits.maxSamplerAnisotropy,
+                    .minLod = 0.0f,
+                    .maxLod = 0.0f,
+                    .borderColor = vk::BorderColor::eIntOpaqueBlack,
+                }};
+
     const auto& data = Common::ReadFileContents(PipelineCachePath);
     pipeline_cache = vk::raii::PipelineCache{
         device,

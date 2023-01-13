@@ -7,7 +7,6 @@
 #include <memory>
 #include <utility>
 #include <vector>
-#include <glm/glm.hpp>
 #include <vulkan/vulkan_raii.hpp>
 #include "core/vulkan_renderer.h"
 
@@ -17,12 +16,10 @@ class VulkanGraphicsPipeline;
 class VulkanImage;
 class VulkanImmUploadBuffer;
 class VulkanTexture;
-
-template <typename T>
-class VulkanUniformBufferObject;
+class VulkanDescriptorSets;
 
 namespace GLSL {
-struct RasterizerUBOBlock;
+struct MaterialBlock;
 }
 
 class VulkanRasterizer final : public VulkanRenderer {
@@ -32,6 +29,7 @@ public:
     ~VulkanRasterizer() override;
 
     void Init(vk::SurfaceKHR surface, const vk::Extent2D& actual_extent) override;
+    void LoadScene(GLTF::Container& gltf) override;
     void DrawFrame() override;
     void OnResized(const vk::Extent2D& actual_extent) override;
 
@@ -39,9 +37,6 @@ private:
     OffscreenImageInfo GetOffscreenImageInfo() const override;
     std::unique_ptr<VulkanDevice> CreateDevice(vk::SurfaceKHR surface,
                                                const vk::Extent2D& actual_extent) const override;
-    GLSL::RasterizerUBOBlock GetUniformBufferObject() const;
-    glm::mat4 GetPushConstant() const;
-
     void CreateDepthResources();
     void CreateFramebuffers();
 
@@ -49,13 +44,12 @@ private:
     std::unique_ptr<VulkanImage> depth_image{};
     vk::raii::ImageView depth_image_view = nullptr;
 
-    std::unique_ptr<VulkanImmUploadBuffer> vertex_buffer{};
-    std::unique_ptr<VulkanImmUploadBuffer> index_buffer{};
-    std::unique_ptr<VulkanTexture> texture{};
+    std::unique_ptr<VulkanTexture> error_texture{};
+    std::vector<std::unique_ptr<VulkanImmUploadBuffer>> materials;
+    std::unique_ptr<VulkanDescriptorSets> descriptor_sets;
 
     vk::raii::RenderPass render_pass = nullptr;
     struct Frame {
-        std::unique_ptr<VulkanUniformBufferObject<GLSL::RasterizerUBOBlock>> uniform{};
         vk::raii::Framebuffer framebuffer = nullptr;
     };
     std::unique_ptr<VulkanFramesInFlight<Frame, 2>> frames;

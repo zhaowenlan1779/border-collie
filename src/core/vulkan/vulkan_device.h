@@ -52,6 +52,7 @@ public:
 
     vk::raii::CommandPool command_pool = nullptr;
     std::unique_ptr<VulkanAllocator> allocator;
+    vk::raii::Sampler default_sampler = nullptr;
 
     static constexpr std::u8string_view PipelineCachePath{u8"cache.bin"};
     vk::raii::PipelineCache pipeline_cache = nullptr;

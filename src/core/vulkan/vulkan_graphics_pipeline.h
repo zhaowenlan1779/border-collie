@@ -18,7 +18,7 @@ public:
     // The parameters in GraphicsPipelineCreateInfo will be set to default values if not set.
     explicit VulkanGraphicsPipeline(const VulkanDevice& device,
                                     vk::GraphicsPipelineCreateInfo pipeline_info,
-                                    vk::raii::PipelineLayout pipeline_layout);
+                                    vk::PipelineLayoutCreateInfo pipeline_layout_info);
     ~VulkanGraphicsPipeline();
 
     vk::Pipeline operator*() const noexcept {

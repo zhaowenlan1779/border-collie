@@ -3,7 +3,7 @@
 // Refer to the license.txt file included.
 
 #include <algorithm>
-#include <vector>
+#include <set>
 #include "core/vulkan/vulkan_device.h"
 #include "core/vulkan/vulkan_graphics_pipeline.h"
 
@@ -11,8 +11,9 @@ namespace Renderer {
 
 VulkanGraphicsPipeline::VulkanGraphicsPipeline(const VulkanDevice& device,
                                                vk::GraphicsPipelineCreateInfo pipeline_info,
-                                               vk::raii::PipelineLayout pipeline_layout_)
-    : pipeline_layout(std::move(pipeline_layout_)) {
+                                               vk::PipelineLayoutCreateInfo pipeline_layout_info) {
+
+    pipeline_layout = vk::raii::PipelineLayout{*device, pipeline_layout_info};
 
     // Fill out the pipeline create info
     // TODO: This might be too restrictive?
@@ -29,19 +30,25 @@ VulkanGraphicsPipeline::VulkanGraphicsPipeline(const VulkanDevice& device,
         pipeline_info.pInputAssemblyState = &input_assembly_state;
     }
 
-    std::vector<vk::DynamicState> dynamic_states;
+    std::set<vk::DynamicState> dynamic_states;
+    if (pipeline_info.pDynamicState) {
+        dynamic_states.insert(pipeline_info.pDynamicState->pDynamicStates,
+                              pipeline_info.pDynamicState->pDynamicStates +
+                                  pipeline_info.pDynamicState->dynamicStateCount);
+    }
+
     static constexpr vk::PipelineViewportStateCreateInfo viewport_state{
         .viewportCount = 1,
         .scissorCount = 1,
     };
     if (!pipeline_info.pViewportState) {
         pipeline_info.pViewportState = &viewport_state;
-        dynamic_states.emplace_back(vk::DynamicState::eViewport);
-        dynamic_states.emplace_back(vk::DynamicState::eScissor);
+        dynamic_states.emplace(vk::DynamicState::eViewport);
+        dynamic_states.emplace(vk::DynamicState::eScissor);
     }
 
     static constexpr vk::PipelineRasterizationStateCreateInfo rasterization_state{
-        .cullMode = vk::CullModeFlagBits::eBack,
+        .cullMode = vk::CullModeFlagBits::eNone,
         .lineWidth = 1.0f,
     };
     if (!pipeline_info.pRasterizationState) {
@@ -66,13 +73,13 @@ VulkanGraphicsPipeline::VulkanGraphicsPipeline(const VulkanDevice& device,
         pipeline_info.pColorBlendState = &color_blend_state;
     }
 
+    std::vector<vk::DynamicState> dynamic_states_vector(dynamic_states.begin(),
+                                                        dynamic_states.end());
     const vk::PipelineDynamicStateCreateInfo dynamic_state{
-        .dynamicStateCount = static_cast<u32>(dynamic_states.size()),
-        .pDynamicStates = dynamic_states.data(),
+        .dynamicStateCount = static_cast<u32>(dynamic_states_vector.size()),
+        .pDynamicStates = dynamic_states_vector.data(),
     };
-    if (!pipeline_info.pDynamicState) {
-        pipeline_info.pDynamicState = &dynamic_state;
-    }
+    pipeline_info.pDynamicState = &dynamic_state;
 
     pipeline_info.layout = *pipeline_layout;
 

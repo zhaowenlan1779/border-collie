@@ -9,6 +9,7 @@ add_library(common STATIC
     pfr_helper.hpp
     ranges.h
     scope_exit.h
+    swap.h
     temp_ptr.h
 )
 

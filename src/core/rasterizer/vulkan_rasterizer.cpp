@@ -3,14 +3,16 @@
 // Refer to the license.txt file included.
 
 #include <array>
-#include <chrono>
-#include <glm/gtc/matrix_transform.hpp>
+#include <glm/glm.hpp>
 #include "common/file_util.h"
+#include "common/ranges.h"
+#include "common/temp_ptr.h"
 #include "core/rasterizer/vulkan_rasterizer.h"
-#include "core/shaders/renderer_glsl.h"
+#include "core/scene.h"
 #include "core/vulkan/vulkan_allocator.h"
 #include "core/vulkan/vulkan_buffer.h"
 #include "core/vulkan/vulkan_context.h"
+#include "core/vulkan/vulkan_descriptor_sets.h"
 #include "core/vulkan/vulkan_frames_in_flight.hpp"
 #include "core/vulkan/vulkan_graphics_pipeline.h"
 #include "core/vulkan/vulkan_helpers.hpp"
@@ -44,6 +46,7 @@ std::unique_ptr<VulkanDevice> VulkanRasterizer::CreateDevice(
         std::array{
             VK_KHR_SWAPCHAIN_EXTENSION_NAME,
             VK_EXT_VERTEX_INPUT_DYNAMIC_STATE_EXTENSION_NAME,
+            VK_EXT_ROBUSTNESS_2_EXTENSION_NAME,
         },
         Helpers::GenericStructureChain{vk::PhysicalDeviceFeatures2{
                                            .features =
@@ -61,6 +64,9 @@ std::unique_ptr<VulkanDevice> VulkanRasterizer::CreateDevice(
                                        },
                                        vk::PhysicalDeviceVertexInputDynamicStateFeaturesEXT{
                                            .vertexInputDynamicState = VK_TRUE,
+                                       },
+                                       vk::PhysicalDeviceRobustness2FeaturesEXT{
+                                           .nullDescriptor = VK_TRUE,
                                        }});
 }
 
@@ -119,81 +125,10 @@ void VulkanRasterizer::CreateDepthResources() {
                             }};
 }
 
-struct Vertex {
-    glm::vec3 pos;
-    glm::vec3 color;
-    glm::vec2 texCoord;
-};
-
 void VulkanRasterizer::Init(vk::SurfaceKHR surface, const vk::Extent2D& actual_extent) {
     VulkanRenderer::Init(surface, actual_extent);
 
-    // Buffers & Textures
-    const std::vector<Vertex> vertices = {{{-0.5f, -0.5f, 0.0f}, {1.0f, 0.0f, 0.0f}, {0.0f, 0.0f}},
-                                          {{0.5f, -0.5f, 0.0f}, {0.0f, 1.0f, 0.0f}, {1.0f, 0.0f}},
-                                          {{0.5f, 0.5f, 0.0f}, {0.0f, 0.0f, 1.0f}, {1.0f, 1.0f}},
-                                          {{-0.5f, 0.5f, 0.0f}, {1.0f, 1.0f, 1.0f}, {0.0f, 1.0f}},
-
-                                          {{-0.5f, -0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}, {0.0f, 0.0f}},
-                                          {{0.5f, -0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}, {1.0f, 0.0f}},
-                                          {{0.5f, 0.5f, -0.5f}, {0.0f, 0.0f, 1.0f}, {1.0f, 1.0f}},
-                                          {{-0.5f, 0.5f, -0.5f}, {1.0f, 1.0f, 1.0f}, {0.0f, 1.0f}}};
-    vertex_buffer = std::make_unique<VulkanImmUploadBuffer>(
-        *device,
-        VulkanBufferCreateInfo{
-            .size = vertices.size() * sizeof(vertices[0]),
-            .usage = vk::BufferUsageFlagBits::eVertexBuffer,
-            .dst_stage_mask = vk::PipelineStageFlagBits2::eVertexAttributeInput,
-            .dst_access_mask = vk::AccessFlagBits2::eVertexAttributeRead,
-        },
-        reinterpret_cast<const u8*>(vertices.data()));
-
-    const std::vector<u16> indices = {0, 1, 2, 2, 3, 0, 4, 5, 6, 6, 7, 4};
-    index_buffer = std::make_unique<VulkanImmUploadBuffer>(
-        *device,
-        VulkanBufferCreateInfo{
-            .size = indices.size() * sizeof(indices[0]),
-            .usage = vk::BufferUsageFlagBits::eIndexBuffer,
-            .dst_stage_mask = vk::PipelineStageFlagBits2::eIndexInput,
-            .dst_access_mask = vk::AccessFlagBits2::eIndexRead,
-        },
-        reinterpret_cast<const u8*>(indices.data()));
-
-    texture = std::make_unique<VulkanTexture>(*device,
-                                              Common::ReadFileContents(u8"textures/texture.jpg"));
-
     frames = std::make_unique<VulkanFramesInFlight<Frame, 2>>(*device);
-    for (auto& frame_in_flight : frames->frames_in_flight) {
-        frame_in_flight.extras.uniform =
-            std::make_unique<VulkanUniformBufferObject<GLSL::RasterizerUBOBlock>>(
-                *device->allocator, vk::PipelineStageFlagBits2::eVertexShader);
-    }
-    frames->CreateDescriptors({{
-        {
-            .type = vk::DescriptorType::eUniformBuffer,
-            .count = 1,
-            .stages = vk::ShaderStageFlagBits::eVertex,
-            .buffers = {{
-                {
-                    *frames->frames_in_flight[0].extras.uniform->dst_buffer,
-                    *frames->frames_in_flight[1].extras.uniform->dst_buffer,
-                },
-            }},
-        },
-        {
-            .type = vk::DescriptorType::eCombinedImageSampler,
-            .count = 1,
-            .stages = vk::ShaderStageFlagBits::eFragment,
-            .images =
-                {
-                    {
-                        .images = {*texture->image_view},
-                        .layout = vk::ImageLayout::eShaderReadOnlyOptimal,
-                    },
-                },
-        },
-    }});
-
     depth_format = FindDepthFormat(device->physical_device);
 
     // Pipeline
@@ -260,7 +195,91 @@ void VulkanRasterizer::Init(vk::SurfaceKHR surface, const vk::Extent2D& actual_e
                     },
             }};
 
-    static constexpr auto VertexAttributeDescriptions = Helpers::AttributeDescriptionsFor<Vertex>();
+    CreateDepthResources();
+    CreateFramebuffers();
+}
+
+void VulkanRasterizer::LoadScene(GLTF::Container& gltf) {
+    scene = std::make_unique<Scene>();
+
+    SceneLoader loader{{
+                           .usage = vk::BufferUsageFlagBits::eVertexBuffer,
+                           .dst_stage_mask = vk::PipelineStageFlagBits2::eVertexAttributeInput,
+                           .dst_access_mask = vk::AccessFlagBits2::eVertexAttributeRead,
+                       },
+                       {
+                           .usage = vk::BufferUsageFlagBits::eIndexBuffer,
+                           .dst_stage_mask = vk::PipelineStageFlagBits2::eIndexInput,
+                           .dst_access_mask = vk::AccessFlagBits2::eIndexRead,
+                       },
+                       *scene,
+                       *device,
+                       gltf};
+    if (!scene->main_sub_scene) {
+        SPDLOG_ERROR("No main scene in glTF");
+        throw std::runtime_error("No main scene in glTF");
+    }
+    if (scene->main_sub_scene->cameras.empty()) {
+        SPDLOG_WARN("No camera in main scene");
+    }
+
+    materials = Common::VectorFromRange(
+        scene->materials | std::views::transform([this](const std::unique_ptr<Material>& material) {
+            return std::make_unique<VulkanImmUploadBuffer>(
+                *device,
+                VulkanBufferCreateInfo{
+                    .size = sizeof(Material),
+                    .usage = vk::BufferUsageFlagBits::eUniformBuffer,
+                    .dst_stage_mask = vk::PipelineStageFlagBits2::eFragmentShader,
+                    .dst_access_mask = vk::AccessFlagBits2::eUniformRead,
+                },
+                reinterpret_cast<const u8*>(&material->glsl_material));
+        }));
+
+    error_texture = std::make_unique<VulkanTexture>(
+        *device, Common::ReadFileContents(u8"textures/texture.jpg"));
+
+    descriptor_sets = std::make_unique<VulkanDescriptorSets>(
+        *device, materials.size(),
+        std::initializer_list<DescriptorBinding>{
+            {
+                .type = vk::DescriptorType::eUniformBuffer,
+                .stages = vk::ShaderStageFlagBits::eFragment,
+                .value = Common::VectorFromRange(
+                    materials |
+                    std::views::transform([](const std::unique_ptr<VulkanImmUploadBuffer>& buffer) {
+                        return DescriptorBinding::Buffers{
+                            .buffers = {{**buffer}},
+                        };
+                    })),
+            },
+            {
+                .type = vk::DescriptorType::eCombinedImageSampler,
+                .stages = vk::ShaderStageFlagBits::eFragment,
+                .value = Common::VectorFromRange(
+                    scene->materials |
+                    std::views::transform([this](const std::unique_ptr<Material>& material) {
+                        if (material->glsl_material.base_color_texture_index == -1) {
+                            return DescriptorBinding::CombinedImageSamplers{
+                                .images = {{
+                                    .image = *error_texture->image_view,
+                                }},
+                            };
+                        }
+
+                        const auto& texture =
+                            scene->textures[material->glsl_material.base_color_texture_index];
+                        return DescriptorBinding::CombinedImageSamplers{
+                            .images = {{
+                                .image = *texture->image->texture->image_view,
+                                .sampler = texture->sampler ? *texture->sampler->sampler
+                                                            : *device->default_sampler,
+                            }},
+                        };
+                    })),
+            },
+        });
+
     pipeline = std::make_unique<VulkanGraphicsPipeline>(
         *device,
         vk::GraphicsPipelineCreateInfo{
@@ -268,89 +287,43 @@ void VulkanRasterizer::Init(vk::SurfaceKHR surface, const vk::Extent2D& actual_e
             .pStages = TempArr<vk::PipelineShaderStageCreateInfo>{{
                 {
                     .stage = vk::ShaderStageFlagBits::eVertex,
-                    .module = *VulkanShader{**device, u8"core/rasterizer/shaders/test.vert"},
+                    .module = *VulkanShader{**device, u8"core/rasterizer/shaders/rasterizer.vert"},
                     .pName = "main",
                 },
                 {
                     .stage = vk::ShaderStageFlagBits::eFragment,
-                    .module = *VulkanShader{**device, u8"core/rasterizer/shaders/test.frag"},
+                    .module = *VulkanShader{**device, u8"core/rasterizer/shaders/rasterizer.frag"},
                     .pName = "main",
                 },
-            }},
-            .pVertexInputState = TempPtr{vk::PipelineVertexInputStateCreateInfo{
-                .vertexBindingDescriptionCount = 1,
-                .pVertexBindingDescriptions = TempArr<vk::VertexInputBindingDescription>{{
-                    .binding = 0,
-                    .stride = sizeof(Vertex),
-                    .inputRate = vk::VertexInputRate::eVertex,
-                }},
-                .vertexAttributeDescriptionCount = VertexAttributeDescriptions.size(),
-                .pVertexAttributeDescriptions = VertexAttributeDescriptions.data(),
             }},
             .pDepthStencilState = TempPtr{vk::PipelineDepthStencilStateCreateInfo{
                 .depthTestEnable = VK_TRUE,
                 .depthWriteEnable = VK_TRUE,
                 .depthCompareOp = vk::CompareOp::eLess,
             }},
+            .pDynamicState = TempPtr{vk::PipelineDynamicStateCreateInfo{
+                .dynamicStateCount = 1,
+                .pDynamicStates = TempArr<vk::DynamicState>{{vk::DynamicState::eVertexInputEXT}},
+            }},
             .renderPass = *render_pass,
         },
-        frames->CreatePipelineLayout({
-            PushConstant<glm::mat4>(vk::ShaderStageFlagBits::eVertex),
-        }));
-
-    CreateDepthResources();
-    CreateFramebuffers();
-}
-
-GLSL::RasterizerUBOBlock VulkanRasterizer::GetUniformBufferObject() const {
-    static auto startTime = std::chrono::high_resolution_clock::now();
-
-    const auto currentTime = std::chrono::high_resolution_clock::now();
-    const float time =
-        std::chrono::duration<float, std::chrono::seconds::period>(currentTime - startTime).count();
-
-    auto proj = glm::perspective(
-        glm::radians(45.0f),
-        swap_chain->extent.width / static_cast<float>(swap_chain->extent.height), 0.1f, 10.0f);
-    proj[1][1] *= -1;
-    return {{
-        .model =
-            glm::rotate(glm::mat4(1.0f), time * glm::radians(90.0f), glm::vec3(0.0f, 0.0f, 1.0f)),
-        .view = glm::lookAt(glm::vec3(2.0f, 2.0f, 2.0f), glm::vec3(0.0f, 0.0f, 0.0f),
-                            glm::vec3(0.0f, 0.0f, 1.0f)),
-        .proj = proj,
-    }};
-}
-
-glm::mat4 VulkanRasterizer::GetPushConstant() const {
-    static auto startTime = std::chrono::high_resolution_clock::now();
-
-    const auto currentTime = std::chrono::high_resolution_clock::now();
-    const float time =
-        std::chrono::duration<float, std::chrono::seconds::period>(currentTime - startTime).count();
-
-    auto proj = glm::perspective(
-        glm::radians(45.0f),
-        swap_chain->extent.width / static_cast<float>(swap_chain->extent.height), 0.1f, 10.0f);
-    proj[1][1] *= -1;
-
-    return proj *
-           glm::lookAt(glm::vec3(2.0f, 2.0f, 2.0f), glm::vec3(0.0f, 0.0f, 0.0f),
-                       glm::vec3(0.0f, 0.0f, 1.0f)) *
-           glm::rotate(glm::mat4(1.0f), time * glm::radians(90.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+        vk::PipelineLayoutCreateInfo{
+            .setLayoutCount = 1,
+            .pSetLayouts = &*descriptor_sets->descriptor_set_layout,
+            .pushConstantRangeCount = 1,
+            .pPushConstantRanges = TempArr<vk::PushConstantRange>{{
+                PushConstant<glm::mat4>(vk::ShaderStageFlagBits::eVertex),
+            }},
+        });
 }
 
 void VulkanRasterizer::DrawFrame() {
     device->allocator->CleanupStagingBuffers();
 
     const auto& frame = frames->AcquireNextFrame();
-    frame.extras.uniform->Update(GetUniformBufferObject());
-
     frames->BeginFrame();
 
     const auto& cmd = frame.command_buffer;
-    frame.extras.uniform->Upload(cmd);
-
     pipeline->BeginRenderPass(cmd, {
                                        .framebuffer = *frame.extras.framebuffer,
                                        .renderArea =
@@ -365,13 +338,35 @@ void VulkanRasterizer::DrawFrame() {
                                            },
                                    });
     cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, **pipeline);
-    cmd.bindVertexBuffers(0, {**vertex_buffer}, {0});
-    cmd.bindIndexBuffer(**index_buffer, 0, vk::IndexType::eUint16);
-    cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *pipeline->pipeline_layout, 0,
-                           frames->GetDescriptorSets(), {});
-    cmd.pushConstants<glm::mat4>(*pipeline->pipeline_layout, vk::ShaderStageFlagBits::eVertex, 0,
-                                 {GetPushConstant()});
-    cmd.drawIndexed(12, 1, 0, 0, 0);
+
+    // TODO: Many optimization opportunities
+    for (const auto& [mesh, model_transform] : scene->main_sub_scene->mesh_instances) {
+        if (scene->main_sub_scene->cameras.empty()) {
+            cmd.pushConstants<glm::mat4>(*pipeline->pipeline_layout,
+                                         vk::ShaderStageFlagBits::eVertex, 0, model_transform);
+        } else {
+            const auto& camera = scene->main_sub_scene->cameras[0];
+            const auto transform = camera->GetProj(static_cast<double>(swap_chain->extent.width) /
+                                                   swap_chain->extent.height) *
+                                   camera->view * model_transform;
+            cmd.pushConstants<glm::mat4>(*pipeline->pipeline_layout,
+                                         vk::ShaderStageFlagBits::eVertex, 0, transform);
+        }
+
+        for (const auto& primitive : mesh->primitives) {
+            cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *pipeline->pipeline_layout, 0,
+                                   descriptor_sets->descriptor_sets[primitive->material], {});
+
+            cmd.setVertexInputEXT(primitive->bindings, primitive->attributes);
+            cmd.bindVertexBuffers(0, primitive->raw_vertex_buffers,
+                                  primitive->vertex_buffer_offsets);
+            cmd.bindIndexBuffer(**primitive->index_buffer->gpu_buffer, 0,
+                                GLTF::GetIndexType(primitive->index_buffer->component_type));
+
+            cmd.drawIndexed(primitive->index_buffer->count, 1, 0, 0, 0);
+        }
+    }
+
     pipeline->EndRenderPass(cmd);
 
     frames->EndFrame();
