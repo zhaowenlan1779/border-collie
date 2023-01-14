@@ -339,9 +339,9 @@ void VulkanRasterizer::DrawFrame() {
     const double camera_aspect_ratio = camera->GetAspectRatio(viewport_aspect_ratio);
     const double relative_aspect_ratio = viewport_aspect_ratio / camera_aspect_ratio;
     if (relative_aspect_ratio > 1) {
-        render_extent.width /= relative_aspect_ratio;
+        render_extent.width = static_cast<u32>(render_extent.width / relative_aspect_ratio);
     } else {
-        render_extent.height *= relative_aspect_ratio;
+        render_extent.height = static_cast<u32>(render_extent.height * relative_aspect_ratio);
     }
 
     const auto camera_transform = camera->GetProj(viewport_aspect_ratio) * camera->view;
@@ -378,7 +378,7 @@ void VulkanRasterizer::DrawFrame() {
             cmd.bindIndexBuffer(**primitive->index_buffer->gpu_buffer, 0,
                                 GLTF::GetIndexType(primitive->index_buffer->component_type));
 
-            cmd.drawIndexed(primitive->index_buffer->count, 1, 0, 0, 0);
+            cmd.drawIndexed(static_cast<u32>(primitive->index_buffer->count), 1, 0, 0, 0);
         }
     }
 

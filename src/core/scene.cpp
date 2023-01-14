@@ -193,7 +193,6 @@ StridedBufferView::~StridedBufferView() = default;
 
 void StridedBufferView::AddAccessor(const GLTF::Accessor& accessor) {
     const auto start = accessor.byte_offset / (*buffer_view.byte_stride);
-    const auto attribute_offset = accessor.byte_offset % (*buffer_view.byte_stride);
     chunks.insert(boost::icl::interval<std::size_t>::right_open(start, start + accessor.count));
 }
 
@@ -291,16 +290,16 @@ Material::Material(SceneLoader& loader, const GLTF::Material& material)
 
     const auto LoadTexture = [&loader](const auto& json_field, int& index, u32& texcoord) {
         if (json_field.has_value()) {
-            index = loader.textures.GetIndex(loader, json_field->index);
-            texcoord = json_field->texcoord;
+            index = static_cast<int>(loader.textures.GetIndex(loader, json_field->index));
+            texcoord = static_cast<u32>(json_field->texcoord);
         } else {
             index = -1;
         }
     };
     if (material.pbr.has_value()) {
         glsl_material.base_color_factor = material.pbr->base_color_factor;
-        glsl_material.metallic_factor = material.pbr->metallic_factor;
-        glsl_material.roughness_factor = material.pbr->roughness_factor;
+        glsl_material.metallic_factor = static_cast<float>(material.pbr->metallic_factor);
+        glsl_material.roughness_factor = static_cast<float>(material.pbr->roughness_factor);
 
         LoadTexture(material.pbr->base_color_texture, glsl_material.base_color_texture_index,
                     glsl_material.base_color_texture_texcoord);
@@ -318,13 +317,13 @@ Material::Material(SceneLoader& loader, const GLTF::Material& material)
     LoadTexture(material.normal_texture, glsl_material.normal_texture_index,
                 glsl_material.normal_texture_texcoord);
     if (material.normal_texture.has_value()) {
-        glsl_material.normal_scale = material.normal_texture->scale;
+        glsl_material.normal_scale = static_cast<float>(material.normal_texture->scale);
     }
 
     LoadTexture(material.occlusion_texture, glsl_material.occlusion_texture_index,
                 glsl_material.occlusion_texture_texcoord);
     if (material.occlusion_texture.has_value()) {
-        glsl_material.occlusion_strength = material.occlusion_texture->strength;
+        glsl_material.occlusion_strength = static_cast<float>(material.occlusion_texture->strength);
     }
 
     glsl_material.emissive_factor = material.emissive_factor;
@@ -422,7 +421,7 @@ void MeshPrimitive::Load(SceneLoader& loader) {
                 });
                 raw_vertex_buffers.emplace_back(VK_NULL_HANDLE);
                 vertex_buffer_offsets.emplace_back(0);
-                null_binding_idx = bindings.size() - 1;
+                null_binding_idx = static_cast<int>(bindings.size() - 1);
             }
             attributes.emplace_back(vk::VertexInputAttributeDescription2EXT{
                 .location = static_cast<u32>(i),
@@ -505,16 +504,22 @@ glm::mat4 Camera::GetProj(double default_aspect_ratio) const {
                                         ? *camera.perspective->aspect_ratio
                                         : default_aspect_ratio;
         if (camera.perspective->zfar.has_value()) {
-            proj = glm::perspective<float>(camera.perspective->yfov, aspect_ratio,
-                                           camera.perspective->znear, *camera.perspective->zfar);
+            proj = glm::perspective<float>(static_cast<float>(camera.perspective->yfov),
+                                           static_cast<float>(aspect_ratio),
+                                           static_cast<float>(camera.perspective->znear),
+                                           static_cast<float>(*camera.perspective->zfar));
         } else {
-            proj = glm::infinitePerspective<float>(camera.perspective->yfov, aspect_ratio,
-                                                   camera.perspective->znear);
+            proj = glm::infinitePerspective<float>(static_cast<float>(camera.perspective->yfov),
+                                                   static_cast<float>(aspect_ratio),
+                                                   static_cast<float>(camera.perspective->znear));
         }
     } else if (camera.orthographic.has_value()) {
-        proj = glm::ortho<float>(-camera.orthographic->xmag, camera.orthographic->xmag,
-                                 -camera.orthographic->ymag, camera.orthographic->ymag,
-                                 camera.orthographic->znear, camera.orthographic->zfar);
+        proj = glm::ortho<float>(static_cast<float>(-camera.orthographic->xmag),
+                                 static_cast<float>(camera.orthographic->xmag),
+                                 static_cast<float>(-camera.orthographic->ymag),
+                                 static_cast<float>(camera.orthographic->ymag),
+                                 static_cast<float>(camera.orthographic->znear),
+                                 static_cast<float>(camera.orthographic->zfar));
     } else {
         SPDLOG_ERROR("Camera {} has neither perspective nor orthographic", name);
         throw std::runtime_error("Camera has neither perspective nor orthographic");

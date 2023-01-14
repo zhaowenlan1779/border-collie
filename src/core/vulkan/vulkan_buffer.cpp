@@ -82,9 +82,9 @@ VulkanImmUploadBuffer::VulkanImmUploadBuffer(VulkanDevice& device,
     std::size_t pos = 0;
     Helpers::ReadAndUploadBuffer(device, *this, create_info.dst_stage_mask,
                                  create_info.dst_access_mask,
-                                 [data, &pos](void* out, std::size_t size) {
-                                     std::memcpy(out, data + pos, size);
-                                     pos += size;
+                                 [data, &pos](void* out, std::size_t read_size) {
+                                     std::memcpy(out, data + pos, read_size);
+                                     pos += read_size;
                                  });
 }
 

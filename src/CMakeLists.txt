@@ -21,6 +21,9 @@ if(MSVC)
     # Avoid windows.h from including some usually unused libs like winsocks.h, since this might cause some redefinition errors.
     add_definitions(-DWIN32_LEAN_AND_MEAN)
 
+    # Silence u8path warning because it's pretty much the only way to work with u8 pathes
+    add_definitions(-D_SILENCE_CXX20_U8PATH_DEPRECATION_WARNING)
+
     # /W4                        - Level 4 warnings
     # /w34263                    - Non-virtual member function hides base class virtual function
     # /w44265                    - Class has virtual functions, but destructor is not virtual
@@ -30,6 +33,7 @@ if(MSVC)
     # /w34459                    - Declaration of 'var' hides global definition
     # /w34946                    - Reinterpret-cast between related types
     # /wd4592                    - Symbol will be dynamically initialized (implementation limitation)
+    # /wd4201                    - nonstandard extension used : nameless struct/union (This is actually standard)
     # /MP                        - Multi-threaded compilation
     # /Zi                        - Output debugging information
     # /Zo                        - Enhanced debug info for optimized builds
@@ -50,6 +54,7 @@ if(MSVC)
         /w34459
         /w34946
         /wd4592
+        /wd4201
         /MP
         /Zi
         /Zo

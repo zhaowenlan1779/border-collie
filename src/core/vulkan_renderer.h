@@ -25,7 +25,7 @@ class VulkanDescriptorSets;
 template <typename ExtraData, std::size_t NumFramesInFlight>
 class VulkanFramesInFlight;
 
-class Scene;
+struct Scene;
 
 /**
  * Base class for Vulkan based renderers.

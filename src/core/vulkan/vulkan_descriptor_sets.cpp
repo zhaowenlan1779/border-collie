@@ -26,7 +26,7 @@ VulkanDescriptorSets::VulkanDescriptorSets(const VulkanDevice& device_, std::siz
 
     std::map<vk::DescriptorType, u32> descriptor_type_count;
     for (const auto& binding : bindings) {
-        descriptor_type_count[binding.type] += binding.array_size * count;
+        descriptor_type_count[binding.type] += static_cast<u32>(binding.array_size * count);
     }
     descriptor_pool = vk::raii::DescriptorPool{
         *device,
@@ -72,9 +72,9 @@ VulkanDescriptorSets::VulkanDescriptorSets(const VulkanDevice& device_, std::siz
 VulkanDescriptorSets::~VulkanDescriptorSets() = default;
 
 void VulkanDescriptorSets::UpdateDescriptor(
-    std::size_t binding_idx, const DescriptorBinding::DescriptorBindingValue& value) {
+    std::size_t binding_idx, const DescriptorBinding::DescriptorBindingValue& binding_value) {
 
-    if (const auto* values = std::get_if<DescriptorBinding::BuffersValue>(&value)) {
+    if (const auto* values = std::get_if<DescriptorBinding::BuffersValue>(&binding_value)) {
         for (std::size_t i = 0; i < count; ++i) {
             const auto& value = values->size() > i ? *(values->begin() + i) : (*values->begin());
             const auto& buffers = value.buffers;
@@ -96,8 +96,9 @@ void VulkanDescriptorSets::UpdateDescriptor(
                 }},
                 {});
         }
-    } else if (const auto* values =
-                   std::get_if<DescriptorBinding::CombinedImageSamplersValue>(&value)) {
+    }
+    if (const auto* values =
+            std::get_if<DescriptorBinding::CombinedImageSamplersValue>(&binding_value)) {
         for (std::size_t i = 0; i < count; ++i) {
             const auto& value = values->size() > i ? *(values->begin() + i) : (*values->begin());
             const auto& images = value.images;
@@ -120,7 +121,8 @@ void VulkanDescriptorSets::UpdateDescriptor(
                 }},
                 {});
         }
-    } else if (const auto* values = std::get_if<DescriptorBinding::AccelStructuresValue>(&value)) {
+    }
+    if (const auto* values = std::get_if<DescriptorBinding::AccelStructuresValue>(&binding_value)) {
         for (std::size_t i = 0; i < count; ++i) {
             const auto& value = values->size() > i ? *(values->begin() + i) : (*values->begin());
             const auto& accel_structures = value.accel_structures;

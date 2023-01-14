@@ -1,6 +1,6 @@
 add_library(getopt
-    getopt.c
-    getopt.h
+    getopt/getopt.c
+    getopt/getopt.h
 )
 
-target_include_directories(getopt INTERFACE ${CMAKE_CURRENT_SOURCE_DIR})
+target_include_directories(getopt INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/getopt)

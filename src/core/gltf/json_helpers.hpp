@@ -82,7 +82,7 @@ bool DeserializeValue(glm::vec<L, T, Q>& out,
         throw std::runtime_error("GLM array is of incorrect size");
     }
 
-    std::size_t i = 0;
+    glm::length_t i = 0;
     for (detail::NumberType<T> element : array) {
         out[i] = static_cast<T>(element);
         ++i;
@@ -105,7 +105,7 @@ bool DeserializeValue(glm::mat<C, R, T, Q>& out,
     }
 
     // Column major
-    std::size_t i = 0, j = 0;
+    glm::length_t i = 0, j = 0;
     for (detail::NumberType<T> element : array) {
         out[i][j] = static_cast<T>(element);
         ++j;

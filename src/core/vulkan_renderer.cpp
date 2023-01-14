@@ -129,7 +129,7 @@ void VulkanRenderer::Init(vk::SurfaceKHR surface, const vk::Extent2D& actual_ext
 }
 
 void VulkanRenderer::CreateRenderTargets() {
-    Helpers::OneTimeCommandContext context{*device};
+    Helpers::OneTimeCommandContext cmd_context{*device};
 
     const auto& info = GetOffscreenImageInfo();
     for (auto& frame_in_flight : pp_frames->frames_in_flight) {
@@ -160,7 +160,7 @@ void VulkanRenderer::CreateRenderTargets() {
             });
 
         Helpers::ImageLayoutTransition(
-            *context, frame.image,
+            *cmd_context, frame.image,
             {
                 .srcStageMask = vk::PipelineStageFlagBits2::eTopOfPipe,
                 .srcAccessMask = vk::AccessFlags2{},
