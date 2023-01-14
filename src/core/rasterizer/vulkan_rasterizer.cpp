@@ -333,17 +333,9 @@ void VulkanRasterizer::DrawFrame() {
 
     const auto& camera = scene->main_sub_scene->cameras[0];
 
-    vk::Extent2D render_extent = swap_chain->extent;
     const double viewport_aspect_ratio =
         static_cast<double>(swap_chain->extent.width) / swap_chain->extent.height;
-    const double camera_aspect_ratio = camera->GetAspectRatio(viewport_aspect_ratio);
-    const double relative_aspect_ratio = viewport_aspect_ratio / camera_aspect_ratio;
-    if (relative_aspect_ratio > 1) {
-        render_extent.width = static_cast<u32>(render_extent.width / relative_aspect_ratio);
-    } else {
-        render_extent.height = static_cast<u32>(render_extent.height * relative_aspect_ratio);
-    }
-
+    const auto render_extent = GetRenderExtent(camera->GetAspectRatio(viewport_aspect_ratio));
     const auto camera_transform = camera->GetProj(viewport_aspect_ratio) * camera->view;
 
     const auto& cmd = frame.command_buffer;

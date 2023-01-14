@@ -269,4 +269,17 @@ void VulkanRenderer::OnResized(const vk::Extent2D& actual_extent) {
            });
 }
 
+vk::Extent2D VulkanRenderer::GetRenderExtent(double camera_aspect_ratio) const {
+    vk::Extent2D render_extent = swap_chain->extent;
+    const double viewport_aspect_ratio =
+        static_cast<double>(swap_chain->extent.width) / swap_chain->extent.height;
+    const double relative_aspect_ratio = viewport_aspect_ratio / camera_aspect_ratio;
+    if (relative_aspect_ratio > 1) {
+        render_extent.width = static_cast<u32>(render_extent.width / relative_aspect_ratio);
+    } else {
+        render_extent.height = static_cast<u32>(render_extent.height * relative_aspect_ratio);
+    }
+    return render_extent;
+}
+
 } // namespace Renderer

@@ -59,6 +59,7 @@ protected:
                                                        const vk::Extent2D& actual_extent) const = 0;
     void CreateRenderTargets();
     void PostprocessAndPresent(vk::Semaphore offscreen_render_finished_semaphore);
+    vk::Extent2D GetRenderExtent(double camera_aspect_ratio) const;
 
     std::unique_ptr<VulkanContext> context;
     std::unique_ptr<VulkanDevice> device;

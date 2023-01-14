@@ -337,14 +337,17 @@ void VulkanPathTracerHW::DrawFrame() {
                            descriptor_sets->descriptor_sets[frame.idx], {});
 
     const auto& camera = scene->main_sub_scene->cameras[0];
+    const double viewport_aspect_ratio =
+        static_cast<double>(swap_chain->extent.width) / swap_chain->extent.height;
+    const auto render_extent = GetRenderExtent(camera->GetAspectRatio(viewport_aspect_ratio));
+
     cmd.pushConstants<PathTracerPushConstant>(
         *pipeline->pipeline_layout, vk::ShaderStageFlagBits::eRaygenKHR, 0,
         {{
             .view_inverse = glm::inverse(camera->view),
-            .proj_inverse = glm::inverse(camera->GetProj(
-                static_cast<double>(swap_chain->extent.width) / swap_chain->extent.height)),
+            .proj_inverse = glm::inverse(camera->GetProj(viewport_aspect_ratio)),
         }});
-    pipeline->TraceRays(cmd, swap_chain->extent.width, swap_chain->extent.height, 1);
+    pipeline->TraceRays(cmd, render_extent.width, render_extent.height, 1);
 
     frames->EndFrame();
 
