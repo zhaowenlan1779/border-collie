@@ -5,7 +5,7 @@ IIIS 2022 Fall: Advanced Computer Graphics - Final Project, by Pengfei Zhu.
 Targets Windows (10 1903 or above) and Linux.
 
 Requires graphics card support for Vulkan Core 1.3 and the following extensions:
-* Rasterizer: `VK_EXT_vertex_input_dynamic_state`, `VK_EXT_robustness2`, `VK_EXT_index_type_uint8`
+* Rasterizer: `VK_EXT_vertex_input_dynamic_state`, `VK_EXT_robustness2`
     * These are all just for convenience; I did not bother to implement the rasterizer without them
 * Path tracer: `VK_KHR_acceleration_structure`, `VK_KHR_ray_tracing_pipeline`, `VK_KHR_deferred_host_operations`
 

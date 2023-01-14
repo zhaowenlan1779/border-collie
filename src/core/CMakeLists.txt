@@ -4,6 +4,7 @@ add_library(core STATIC
     gltf/gltf_container.h
     gltf/json_helpers.hpp
     gltf/simdjson.h
+    path_tracer_hw/shaders/path_tracer_glsl.h
     path_tracer_hw/vulkan_path_tracer_hw.cpp
     path_tracer_hw/vulkan_path_tracer_hw.h
     rasterizer/vulkan_rasterizer.cpp
@@ -53,4 +54,4 @@ target_shaders(core
 )
 
 target_link_libraries(core PUBLIC common boost glm::glm simdjson spdlog Vulkan::Vulkan VulkanMemoryAllocator)
-target_link_libraries(core PRIVATE base64 cityhash stb_image)
+target_link_libraries(core PRIVATE base64 cityhash mikktspace stb_image)

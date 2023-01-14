@@ -81,6 +81,11 @@ constexpr std::size_t GetComponentCount(const std::string_view& type) {
     throw std::runtime_error("Invalid accessor type");
 }
 
+constexpr std::size_t GetTotalSize(const Accessor& accessor) {
+    return GetComponentSize(accessor.component_type) * GetComponentCount(accessor.type) *
+           accessor.count;
+}
+
 inline vk::Format GetVertexInputFormat(Accessor::ComponentType component_type,
                                        const std::string_view& type, bool normalized) {
     static const std::map<std::pair<Accessor::ComponentType, std::string_view>, vk::Format>
@@ -119,13 +124,12 @@ inline vk::Format GetVertexInputFormat(Accessor::ComponentType component_type,
 
 constexpr vk::IndexType GetIndexType(Accessor::ComponentType component_type) {
     switch (component_type) {
-    case Accessor::ComponentType::UnsignedByte:
-        return vk::IndexType::eUint8EXT;
     case Accessor::ComponentType::UnsignedShort:
         return vk::IndexType::eUint16;
     case Accessor::ComponentType::UnsignedInt:
         return vk::IndexType::eUint32;
     default:
+        // Note: u8 will be converted to u16 when loading, and hence shouldn't appear here
         SPDLOG_ERROR("Invalid component type for index buffer {}",
                      static_cast<int>(component_type));
         throw std::runtime_error("Invalid component type for index buffer {}");

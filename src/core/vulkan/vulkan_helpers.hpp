@@ -169,7 +169,7 @@ consteval std::size_t OffsetOf() {
     union {
         char c[sizeof(T)];
         T o;
-    } u;
+    } u{.o = T{}};
     for (std::size_t i = 0; i < sizeof(T); ++i) {
         // Not exactly sure about the legality of taking address of inactive union member,
         // but all of GCC/Clang/MSVC admit this
@@ -182,7 +182,7 @@ consteval std::size_t OffsetOf() {
 }
 
 template <typename T, u32 BindingIdx, u32 LocationStart, u32 TupleIdx>
-consteval vk::VertexInputAttributeDescription AttributeDescriptionFor() {
+consteval vk::VertexInputAttributeDescription2EXT AttributeDescriptionFor() {
     static_assert(FormatOf<boost::pfr::tuple_element_t<TupleIdx, T>> != vk::Format::eUndefined,
                   "Data format not supported");
     return {
@@ -194,7 +194,7 @@ consteval vk::VertexInputAttributeDescription AttributeDescriptionFor() {
 }
 
 template <typename T, u32 BindingIdx, u32 LocationStart, std::size_t... Idxs>
-consteval std::array<vk::VertexInputAttributeDescription, sizeof...(Idxs)>
+consteval std::array<vk::VertexInputAttributeDescription2EXT, sizeof...(Idxs)>
 AttributeDescriptionsHelper(std::index_sequence<Idxs...>) {
     return {{AttributeDescriptionFor<T, BindingIdx, LocationStart, Idxs>()...}};
 }
@@ -202,7 +202,7 @@ AttributeDescriptionsHelper(std::index_sequence<Idxs...>) {
 } // namespace detail
 
 template <typename T, u32 BindingIdx = 0, u32 LocationStart = 0>
-consteval std::array<vk::VertexInputAttributeDescription, boost::pfr::tuple_size_v<T>>
+consteval std::array<vk::VertexInputAttributeDescription2EXT, boost::pfr::tuple_size_v<T>>
 AttributeDescriptionsFor() {
     return detail::AttributeDescriptionsHelper<T, BindingIdx, LocationStart>(
         std::make_index_sequence<boost::pfr::tuple_size_v<T>>());

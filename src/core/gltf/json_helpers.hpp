@@ -127,10 +127,10 @@ template <typename T, StringLiteral Name, auto DefaultValue>
 struct Field<T, Name, DefaultValue> {
     T value;
 
-    operator T() const {
+    constexpr operator T() const noexcept {
         return value;
     }
-    operator T&() {
+    operator T&() noexcept {
         return value;
     }
 };

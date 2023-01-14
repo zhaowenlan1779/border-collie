@@ -47,31 +47,29 @@ std::unique_ptr<VulkanDevice> VulkanRasterizer::CreateDevice(
             VK_KHR_SWAPCHAIN_EXTENSION_NAME,
             VK_EXT_VERTEX_INPUT_DYNAMIC_STATE_EXTENSION_NAME,
             VK_EXT_ROBUSTNESS_2_EXTENSION_NAME,
-            VK_EXT_INDEX_TYPE_UINT8_EXTENSION_NAME,
         },
-        Helpers::GenericStructureChain{vk::PhysicalDeviceFeatures2{
-                                           .features =
-                                               {
-                                                   .samplerAnisotropy = VK_TRUE,
-                                               },
-                                       },
-                                       // We don't need this in itself, but we enabled it on VMA
-                                       vk::PhysicalDeviceVulkan12Features{
-                                           .bufferDeviceAddress = VK_TRUE,
-                                       },
-                                       vk::PhysicalDeviceVulkan13Features{
-                                           .pipelineCreationCacheControl = VK_TRUE,
-                                           .synchronization2 = VK_TRUE,
-                                       },
-                                       vk::PhysicalDeviceVertexInputDynamicStateFeaturesEXT{
-                                           .vertexInputDynamicState = VK_TRUE,
-                                       },
-                                       vk::PhysicalDeviceRobustness2FeaturesEXT{
-                                           .nullDescriptor = VK_TRUE,
-                                       },
-                                       vk::PhysicalDeviceIndexTypeUint8FeaturesEXT{
-                                           .indexTypeUint8 = VK_TRUE,
-                                       }});
+        Helpers::GenericStructureChain{
+            vk::PhysicalDeviceFeatures2{
+                .features =
+                    {
+                        .samplerAnisotropy = VK_TRUE,
+                    },
+            },
+            // We don't need this in itself, but we enabled it on VMA
+            vk::PhysicalDeviceVulkan12Features{
+                .bufferDeviceAddress = VK_TRUE,
+            },
+            vk::PhysicalDeviceVulkan13Features{
+                .pipelineCreationCacheControl = VK_TRUE,
+                .synchronization2 = VK_TRUE,
+            },
+            vk::PhysicalDeviceVertexInputDynamicStateFeaturesEXT{
+                .vertexInputDynamicState = VK_TRUE,
+            },
+            vk::PhysicalDeviceRobustness2FeaturesEXT{
+                .nullDescriptor = VK_TRUE,
+            },
+        });
 }
 
 static vk::Format FindDepthFormat(const vk::raii::PhysicalDevice& physical_device) {

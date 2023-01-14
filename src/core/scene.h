@@ -50,23 +50,7 @@ public:
     std::size_t offset = 0;
 };
 
-// Buffer views used for anything but vertex attributes can only have one accessor.
-// These represent both the accessor and the buffer view.
-class CPUAccessor : NonCopyable {
-public:
-    std::string name;
-    std::vector<u8> data;
-
-    explicit CPUAccessor(SceneLoader& loader, const GLTF::Accessor& accessor);
-    ~CPUAccessor();
-};
-
-struct BufferParams {
-    vk::BufferUsageFlags usage;
-    vk::PipelineStageFlags2 dst_stage_mask;
-    vk::AccessFlags2 dst_access_mask;
-};
-class GPUAccessor : NonCopyable {
+class IndexBufferAccessor : NonCopyable {
 public:
     std::string name;
     std::shared_ptr<VulkanBuffer> gpu_buffer;
@@ -74,17 +58,16 @@ public:
     std::string type;
     std::size_t count{};
 
-    explicit GPUAccessor(SceneLoader& loader, const GLTF::Accessor& accessor,
-                         const BufferParams& params);
-    ~GPUAccessor();
+    explicit IndexBufferAccessor();
+    explicit IndexBufferAccessor(SceneLoader& loader, const GLTF::Accessor& accessor);
+    ~IndexBufferAccessor();
 };
 
 // Buffer view used for vertex attributes can be referenced by multiple accessors.
-// Should only be used when buffer view has byte stride
-class StridedBufferView : NonCopyable {
+class VertexBufferView : NonCopyable {
 public:
-    explicit StridedBufferView(const SceneLoader& loader, const GLTF::BufferView& buffer_view);
-    ~StridedBufferView();
+    explicit VertexBufferView(const SceneLoader& loader, const GLTF::BufferView& buffer_view);
+    ~VertexBufferView();
 
     void AddAccessor(const GLTF::Accessor& accessor);
 
@@ -101,9 +84,14 @@ public:
 
 private:
     const GLTF::BufferView& buffer_view;
+    // Strided buffers
     boost::icl::interval_set<std::size_t> chunks;
     // Interval start element -> buffer
     std::unordered_map<std::size_t, std::shared_ptr<VulkanBuffer>> buffers;
+
+    // Non-strided buffers
+    const GLTF::Accessor* non_strided_accessor{};
+    std::shared_ptr<VulkanBuffer> non_strided_buffer;
 };
 
 class Sampler : NonCopyable {
@@ -158,19 +146,38 @@ public:
     std::vector<std::shared_ptr<VulkanBuffer>> vertex_buffers;
     std::size_t max_vertices{}; // For ray tracing
 
-    std::shared_ptr<GPUAccessor> index_buffer;
+    std::shared_ptr<IndexBufferAccessor> index_buffer;
 
+    explicit MeshPrimitive(const GLTF::Mesh::Primitive& primitive);
     explicit MeshPrimitive(SceneLoader& loader, const GLTF::Mesh::Primitive& primitive);
-    ~MeshPrimitive();
+    virtual ~MeshPrimitive();
 
     // Actually load the data. Must be called after vertex buffers have been loaded.
-    void Load(SceneLoader& loader);
+    virtual void Load(SceneLoader& loader);
 
-private:
+protected:
     const GLTF::Mesh::Primitive& primitive;
+};
 
-    // Vertex buffer views corresponding to each attribute accessor
-    std::vector<std::shared_ptr<StridedBufferView>> strided_buffer_views;
+// Represents an accessor with its data loaded in CPU. Used while generating tangents.
+class CPUAccessor : NonCopyable {
+public:
+    std::vector<u8> data;
+
+    explicit CPUAccessor(SceneLoader& loader, const GLTF::Accessor& accessor);
+    ~CPUAccessor();
+};
+
+/// This should be used when it's necessary to generate the tangents. In this case, vertex buffers
+/// will be loaded to the CPU, and the index list will be regenerated
+class MeshPrimitiveGenerateTangent : public MeshPrimitive {
+public:
+    explicit MeshPrimitiveGenerateTangent(SceneLoader& loader,
+                                          const GLTF::Mesh::Primitive& primitive);
+    ~MeshPrimitiveGenerateTangent() override;
+
+    // Actually load the data. Must be called after vertex buffers have been loaded.
+    void Load(SceneLoader& loader) override;
 };
 
 class Mesh : NonCopyable {
@@ -225,6 +232,11 @@ struct Scene {
     std::unique_ptr<SubScene> main_sub_scene;
 };
 
+struct BufferParams {
+    vk::BufferUsageFlags usage;
+    vk::PipelineStageFlags2 dst_stage_mask;
+    vk::AccessFlags2 dst_access_mask;
+};
 class SceneLoader {
 public:
     explicit SceneLoader(const BufferParams& vertex_buffer_params,
@@ -257,8 +269,9 @@ public:
         }
     };
     LoaderTempMap<GLTF::Buffer, BufferFile> buffer_files;
-    LoaderTempMap<GLTF::Accessor, GPUAccessor> gpu_accessors;
-    LoaderTempMap<GLTF::BufferView, StridedBufferView> strided_buffer_views;
+    LoaderTempMap<GLTF::Accessor, CPUAccessor> cpu_accessors;
+    LoaderTempMap<GLTF::Accessor, IndexBufferAccessor> index_accessors;
+    LoaderTempMap<GLTF::BufferView, VertexBufferView> vertex_buffer_views;
     LoaderTempMap<GLTF::Sampler, Sampler> samplers;
     LoaderTempMap<GLTF::Image, Image> images;
     LoaderTempMap<GLTF::Mesh, Mesh> meshes;

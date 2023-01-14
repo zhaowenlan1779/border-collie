@@ -5,13 +5,18 @@
 #include <map>
 #include <ranges>
 #include <type_traits>
+#include <unordered_map>
+#include <boost/pfr.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/quaternion.hpp>
+#include <glm/gtx/hash.hpp>
 #include <libbase64.h>
+#include <mikktspace/mikktspace.h>
 #include <spdlog/spdlog.h>
 #include "common/assert.h"
 #include "common/ranges.h"
 #include "common/scope_exit.h"
+#include "common/swap.h"
 #include "core/gltf/gltf_container.h"
 #include "core/gltf/json_helpers.hpp"
 #include "core/scene.h"
@@ -139,101 +144,128 @@ void BufferFile::Seek(std::size_t new_pos) {
     }
 }
 
-CPUAccessor::CPUAccessor(SceneLoader& loader, const GLTF::Accessor& accessor)
-    : name(accessor.name.value_or("Unnamed")) {
+IndexBufferAccessor::IndexBufferAccessor() = default;
 
-    const auto total_size = GetComponentSize(accessor.component_type) *
-                            GLTF::GetComponentCount(accessor.type) * accessor.count;
-    data.resize(total_size);
-
-    if (accessor.buffer_view.has_value()) {
-        const auto& buffer_view = loader.gltf.buffer_views[*accessor.buffer_view];
-        auto& buffer_file = *loader.buffer_files.Get(loader, buffer_view.buffer);
-        buffer_file.Seek(accessor.byte_offset + buffer_view.byte_offset);
-        buffer_file.Read(data.data(), data.size());
-    }
-}
-
-CPUAccessor::~CPUAccessor() = default;
-
-GPUAccessor::GPUAccessor(SceneLoader& loader, const GLTF::Accessor& accessor,
-                         const BufferParams& params)
+IndexBufferAccessor::IndexBufferAccessor(SceneLoader& loader, const GLTF::Accessor& accessor)
     : name(accessor.name.value_or("Unnamed")), component_type(accessor.component_type),
       type(accessor.type), count(accessor.count) {
 
-    const auto total_size =
-        GetComponentSize(component_type) * GLTF::GetComponentCount(type) * count;
-    if (accessor.buffer_view.has_value()) {
-        const auto& buffer_view = loader.gltf.buffer_views[*accessor.buffer_view];
-        auto& buffer_file = *loader.buffer_files.Get(loader, buffer_view.buffer);
-        buffer_file.Seek(accessor.byte_offset + buffer_view.byte_offset);
+    if (!accessor.buffer_view.has_value()) {
+        // Note: Strictly speaking we should allow the case where no buffer_view is present,
+        // but that's pretty much pointless for index buffers.
+        SPDLOG_ERROR("Index buffer has no buffer view");
+        throw std::runtime_error("Index buffer has no buffer view");
+    }
 
+    const auto total_size = GetTotalSize(accessor);
+
+    const auto& buffer_view = loader.gltf.buffer_views[*accessor.buffer_view];
+    auto& buffer_file = *loader.buffer_files.Get(loader, buffer_view.buffer);
+    buffer_file.Seek(buffer_view.byte_offset + accessor.byte_offset);
+
+    if (component_type == GLTF::Accessor::ComponentType::UnsignedByte) {
+        component_type = GLTF::Accessor::ComponentType::UnsignedShort;
+        // Convert into u16 as we upload it
         gpu_buffer = std::make_shared<VulkanImmUploadBuffer>(
             loader.device,
-            VulkanBufferCreateInfo{total_size, params.usage, params.dst_stage_mask,
-                                   params.dst_access_mask},
-            [&buffer_file](void* data, std::size_t size) { buffer_file.Read(data, size); });
+            VulkanBufferCreateInfo{total_size * 2, loader.index_buffer_params.usage,
+                                   loader.index_buffer_params.dst_stage_mask,
+                                   loader.index_buffer_params.dst_access_mask},
+            [&buffer_file](void* data, std::size_t size) {
+                std::vector<u8> temp_data(size);
+                buffer_file.Read(temp_data.data(), size);
+                for (std::size_t i = 0; i < size; ++i) {
+                    *(reinterpret_cast<u16_le*>(data) + i) = temp_data[i];
+                }
+            });
     } else {
-        gpu_buffer = std::make_shared<VulkanZeroedBuffer>(
-            loader.device, VulkanBufferCreateInfo{total_size, params.usage, params.dst_stage_mask,
-                                                  params.dst_access_mask});
+        GetIndexType(component_type); // Make sure we have an index type
+        gpu_buffer = std::make_shared<VulkanImmUploadBuffer>(
+            loader.device,
+            VulkanBufferCreateInfo{total_size, loader.index_buffer_params.usage,
+                                   loader.index_buffer_params.dst_stage_mask,
+                                   loader.index_buffer_params.dst_access_mask},
+            [&buffer_file](void* data, std::size_t size) { buffer_file.Read(data, size); });
     }
 }
 
-GPUAccessor::~GPUAccessor() = default;
+IndexBufferAccessor::~IndexBufferAccessor() = default;
 
-StridedBufferView::StridedBufferView([[maybe_unused]] const SceneLoader& loader,
-                                     const GLTF::BufferView& buffer_view_)
-    : buffer_view(buffer_view_) {
+VertexBufferView::VertexBufferView([[maybe_unused]] const SceneLoader& loader,
+                                   const GLTF::BufferView& buffer_view_)
+    : buffer_view(buffer_view_) {}
 
-    ASSERT(buffer_view.byte_stride.has_value());
+VertexBufferView::~VertexBufferView() = default;
+
+void VertexBufferView::AddAccessor(const GLTF::Accessor& accessor) {
+    if (buffer_view.byte_stride.has_value()) {
+        const auto start = accessor.byte_offset / (*buffer_view.byte_stride);
+        chunks.insert(boost::icl::interval<std::size_t>::right_open(start, start + accessor.count));
+    } else {
+        non_strided_accessor = &accessor;
+    }
 }
 
-StridedBufferView::~StridedBufferView() = default;
-
-void StridedBufferView::AddAccessor(const GLTF::Accessor& accessor) {
-    const auto start = accessor.byte_offset / (*buffer_view.byte_stride);
-    chunks.insert(boost::icl::interval<std::size_t>::right_open(start, start + accessor.count));
-}
-
-void StridedBufferView::Load(SceneLoader& loader) {
+void VertexBufferView::Load(SceneLoader& loader) {
     if (!buffers.empty()) {
         return;
     }
 
-    const auto byte_stride = *buffer_view.byte_stride;
-
     auto& buffer_file = *loader.buffer_files.Get(loader, buffer_view.buffer);
-    for (const auto& chunk : chunks) {
-        buffer_file.Seek(buffer_view.byte_offset + chunk.lower() * byte_stride);
-        buffers.emplace(
-            chunk.lower(),
-            std::make_shared<VulkanImmUploadBuffer>(
-                loader.device,
-                VulkanBufferCreateInfo{
-                    .size = (chunk.upper() - chunk.lower()) * byte_stride,
-                    .usage = loader.vertex_buffer_params.usage,
-                    .dst_stage_mask = loader.vertex_buffer_params.dst_stage_mask,
-                    .dst_access_mask = loader.vertex_buffer_params.dst_access_mask,
-                },
-                [&buffer_file](void* data, std::size_t size) { buffer_file.Read(data, size); }));
+    if (buffer_view.byte_stride.has_value()) {
+        const auto byte_stride = *buffer_view.byte_stride;
+        for (const auto& chunk : chunks) {
+            buffer_file.Seek(buffer_view.byte_offset + chunk.lower() * byte_stride);
+            buffers.emplace(chunk.lower(),
+                            std::make_shared<VulkanImmUploadBuffer>(
+                                loader.device,
+                                VulkanBufferCreateInfo{
+                                    .size = (chunk.upper() - chunk.lower()) * byte_stride,
+                                    .usage = loader.vertex_buffer_params.usage,
+                                    .dst_stage_mask = loader.vertex_buffer_params.dst_stage_mask,
+                                    .dst_access_mask = loader.vertex_buffer_params.dst_access_mask,
+                                },
+                                [&buffer_file](void* data, std::size_t size) {
+                                    buffer_file.Read(data, size);
+                                }));
+        }
+    } else {
+        ASSERT(non_strided_accessor);
+
+        buffer_file.Seek(buffer_view.byte_offset + non_strided_accessor->byte_offset);
+        non_strided_buffer = std::make_shared<VulkanImmUploadBuffer>(
+            loader.device,
+            VulkanBufferCreateInfo{
+                .size = GetTotalSize(*non_strided_accessor),
+                .usage = loader.vertex_buffer_params.usage,
+                .dst_stage_mask = loader.vertex_buffer_params.dst_stage_mask,
+                .dst_access_mask = loader.vertex_buffer_params.dst_access_mask,
+            },
+            [&buffer_file](void* data, std::size_t size) { buffer_file.Read(data, size); });
     }
 }
 
-StridedBufferView::BufferInfo StridedBufferView::GetAccessorBufferInfo(
+VertexBufferView::BufferInfo VertexBufferView::GetAccessorBufferInfo(
     const GLTF::Accessor& accessor) const {
+    if (buffer_view.byte_stride.has_value()) {
+        const auto byte_stride = *buffer_view.byte_stride;
+        const auto start = accessor.byte_offset / byte_stride;
+        const auto attribute_offset = accessor.byte_offset % byte_stride;
 
-    const auto byte_stride = *buffer_view.byte_stride;
-    const auto start = accessor.byte_offset / byte_stride;
-    const auto attribute_offset = accessor.byte_offset % byte_stride;
-
-    const auto iter = chunks.find(start);
-    ASSERT_MSG(iter != chunks.end(), "Failed to find interval containing accessor");
-    return {
-        .buffer = buffers.at(iter->lower()),
-        .buffer_offset = (start - iter->lower()) * byte_stride,
-        .attribute_offset = attribute_offset,
-    };
+        const auto iter = chunks.find(start);
+        ASSERT_MSG(iter != chunks.end(), "Failed to find interval containing accessor");
+        return {
+            .buffer = buffers.at(iter->lower()),
+            .buffer_offset = (start - iter->lower()) * byte_stride,
+            .attribute_offset = attribute_offset,
+        };
+    } else {
+        return {
+            .buffer = non_strided_buffer,
+            .buffer_offset = 0,
+            .attribute_offset = 0,
+        };
+    }
 }
 
 Sampler::Sampler(const SceneLoader& loader, const GLTF::Sampler& sampler)
@@ -292,6 +324,10 @@ Material::Material(SceneLoader& loader, const GLTF::Material& material)
         if (json_field.has_value()) {
             index = static_cast<int>(loader.textures.GetIndex(loader, json_field->index));
             texcoord = static_cast<u32>(json_field->texcoord);
+            if (texcoord > 1) {
+                SPDLOG_ERROR("Currently only 2 UVs are supported, but requested UV{}", texcoord);
+                throw std::runtime_error("Unsupported number of UV");
+            }
         } else {
             index = -1;
         }
@@ -334,14 +370,15 @@ Material::Material(std::string name, const GLSL::Material& glsl_material)
 
 Material::~Material() = default;
 
+MeshPrimitive::MeshPrimitive(const GLTF::Mesh::Primitive& primitive_) : primitive(primitive_) {}
+
 MeshPrimitive::MeshPrimitive(SceneLoader& loader, const GLTF::Mesh::Primitive& primitive_)
     : primitive(primitive_) {
     if (primitive.material.has_value()) {
         material = static_cast<int>(loader.materials.GetIndex(loader, *primitive.material));
     }
     if (primitive.indices.has_value()) {
-        index_buffer =
-            loader.gpu_accessors.Get(loader, *primitive.indices, loader.index_buffer_params);
+        index_buffer = loader.index_accessors.Get(loader, *primitive.indices);
     }
 
     const std::array<std::optional<std::size_t>, 6> attribute_accessors{{
@@ -358,9 +395,8 @@ MeshPrimitive::MeshPrimitive(SceneLoader& loader, const GLTF::Mesh::Primitive& p
         }
 
         const auto& accessor = loader.gltf.accessors[*accessor_idx];
-        if (accessor.buffer_view.has_value() &&
-            loader.gltf.buffer_views[*accessor.buffer_view].byte_stride.has_value()) {
-            loader.strided_buffer_views.Get(loader, *accessor.buffer_view)->AddAccessor(accessor);
+        if (accessor.buffer_view.has_value()) {
+            loader.vertex_buffer_views.Get(loader, *accessor.buffer_view)->AddAccessor(accessor);
         }
         if (max_vertices != 0 && max_vertices != accessor.count) {
             SPDLOG_ERROR("Different accessors in primitive should have the same count");
@@ -381,7 +417,7 @@ void MeshPrimitive::Load(SceneLoader& loader) {
     // (buffer, buffer_offset) -> binding
     std::map<std::pair<vk::Buffer, std::size_t>, u32> binding_index_map;
     const auto GetBindingIndex =
-        [this, &binding_index_map](const StridedBufferView::BufferInfo& info, std::size_t stride) {
+        [this, &binding_index_map](const VertexBufferView::BufferInfo& info, std::size_t stride) {
             if (!binding_index_map.count({**info.buffer, info.buffer_offset})) {
                 bindings.emplace_back(vk::VertexInputBindingDescription2EXT{
                     .binding = static_cast<u32>(bindings.size()),
@@ -399,18 +435,19 @@ void MeshPrimitive::Load(SceneLoader& loader) {
         };
 
     // accessor, default format
-    const std::array<std::pair<std::optional<std::size_t>, vk::Format>, 5> attribute_accessors{{
+    const std::array<std::pair<std::optional<std::size_t>, vk::Format>, 6> attribute_accessors{{
         {primitive.attributes.position, vk::Format::eR32G32B32Sfloat},
         {primitive.attributes.normal, vk::Format::eR32G32B32Sfloat},
         {primitive.attributes.texcoord_0, vk::Format::eR32G32Sfloat},
         {primitive.attributes.texcoord_1, vk::Format::eR32G32Sfloat},
         {primitive.attributes.color_0, vk::Format::eR32G32B32A32Sfloat},
+        {primitive.attributes.tangent, vk::Format::eR32G32B32A32Sfloat},
     }};
 
     int null_binding_idx = -1;
     for (std::size_t i = 0; i < attribute_accessors.size(); ++i) {
         const auto& [accessor_idx, default_format] = attribute_accessors[i];
-        if (!accessor_idx.has_value()) {
+        const auto AddNullBinding = [this, &null_binding_idx, i, default_format = default_format] {
             if (null_binding_idx == -1) {
                 // Create a null binding
                 bindings.emplace_back(vk::VertexInputBindingDescription2EXT{
@@ -429,31 +466,30 @@ void MeshPrimitive::Load(SceneLoader& loader) {
                 .format = default_format,
                 .offset = 0,
             });
+        };
+
+        if (!accessor_idx.has_value()) {
+            AddNullBinding();
             continue;
         }
 
         const auto& accessor = loader.gltf.accessors[*accessor_idx];
         u32 binding{};
         u32 attribute_offset{};
-        if (accessor.buffer_view.has_value() &&
-            loader.gltf.buffer_views[*accessor.buffer_view].byte_stride.has_value()) {
+        if (accessor.buffer_view.has_value()) {
+            auto& vertex_buffer_view =
+                loader.vertex_buffer_views.Get(loader, *accessor.buffer_view);
+            vertex_buffer_view->Load(loader);
 
-            auto& strided_buffer_view =
-                loader.strided_buffer_views.Get(loader, *accessor.buffer_view);
-            strided_buffer_view->Load(loader);
-
-            const auto& info = strided_buffer_view->GetAccessorBufferInfo(accessor);
-            binding =
-                GetBindingIndex(info, *loader.gltf.buffer_views[*accessor.buffer_view].byte_stride);
+            const auto& info = vertex_buffer_view->GetAccessorBufferInfo(accessor);
+            const auto stride =
+                loader.gltf.buffer_views[*accessor.buffer_view].byte_stride.value_or(
+                    GetComponentSize(accessor.component_type) *
+                    GLTF::GetComponentCount(accessor.type));
+            binding = GetBindingIndex(info, stride);
             attribute_offset = static_cast<u32>(info.attribute_offset);
         } else {
-            binding = GetBindingIndex(
-                {
-                    .buffer = loader.gpu_accessors
-                                  .Get(loader, *accessor_idx, loader.vertex_buffer_params)
-                                  ->gpu_buffer,
-                },
-                GetComponentSize(accessor.component_type) * GLTF::GetComponentCount(accessor.type));
+            AddNullBinding();
         }
         attributes.emplace_back(vk::VertexInputAttributeDescription2EXT{
             .location = static_cast<u32>(i),
@@ -465,11 +501,317 @@ void MeshPrimitive::Load(SceneLoader& loader) {
     }
 }
 
+CPUAccessor::CPUAccessor(SceneLoader& loader, const GLTF::Accessor& accessor) {
+    data.resize(GetTotalSize(accessor));
+    if (!accessor.buffer_view.has_value()) {
+        return;
+    }
+
+    const auto& buffer_view = loader.gltf.buffer_views[*accessor.buffer_view];
+    auto& buffer_file = *loader.buffer_files.Get(loader, buffer_view.buffer);
+    if (buffer_view.byte_stride.has_value()) {
+        const auto byte_stride = *buffer_view.byte_stride;
+        const auto element_size =
+            GetComponentSize(accessor.component_type) * GLTF::GetComponentCount(accessor.type);
+        for (std::size_t i = 0; i < accessor.count; ++i) {
+            buffer_file.Seek(buffer_view.byte_offset + accessor.byte_offset + i * byte_stride);
+            buffer_file.Read(data.data() + i * element_size, element_size);
+        }
+    } else {
+        buffer_file.Seek(buffer_view.byte_offset + accessor.byte_offset);
+        buffer_file.Read(data.data(), data.size());
+    }
+}
+
+CPUAccessor::~CPUAccessor() = default;
+
+MeshPrimitiveGenerateTangent::MeshPrimitiveGenerateTangent(SceneLoader& loader,
+                                                           const GLTF::Mesh::Primitive& primitive_)
+    : MeshPrimitive(primitive_) {
+    if (primitive.material.has_value()) {
+        material = static_cast<int>(loader.materials.GetIndex(loader, *primitive.material));
+    }
+}
+
+MeshPrimitiveGenerateTangent::~MeshPrimitiveGenerateTangent() = default;
+
+namespace MikkT {
+
+struct Vertex {
+    glm::vec3 position{};
+    glm::vec3 normal{};
+    glm::vec2 texcoord_0{};
+    glm::vec2 texcoord_1{};
+    glm::vec4 color{};
+    glm::vec4 tangent{};
+
+    bool operator==(const Vertex&) const = default;
+};
+
+} // namespace MikkT
+} // namespace Renderer
+
+template <>
+struct std::hash<Renderer::MikkT::Vertex> {
+    std::size_t operator()(const Renderer::MikkT::Vertex& v) const noexcept {
+        return boost::pfr::hash_fields(v);
+    }
+};
+
+namespace Renderer {
+namespace MikkT {
+
+struct UserData {
+    const std::vector<Vertex>& vertices;
+    const std::vector<u32>& indices;
+    std::size_t tex_coord{};
+    std::vector<glm::vec4> out;
+};
+
+static int GetNumFaces(const SMikkTSpaceContext* context) {
+    const auto& data = *reinterpret_cast<UserData*>(context->m_pUserData);
+    if (data.indices.empty()) {
+        return static_cast<int>(data.vertices.size() / 3);
+    }
+    return static_cast<int>(data.indices.size() / 3);
+}
+
+static int GetVertexIndex(const UserData& data, int idx) {
+    if (data.indices.empty()) {
+        return idx;
+    }
+    return data.indices[idx];
+}
+
+static float LoadFloat(const std::vector<u8>& data, std::size_t idx,
+                       GLTF::Accessor::ComponentType type) {
+    if (type == GLTF::Accessor::ComponentType::Float) {
+        return *reinterpret_cast<const float*>(data.data() + idx * sizeof(float));
+    } else if (type == GLTF::Accessor::ComponentType::UnsignedByte) {
+        return (*(data.data() + idx)) / 255.0f;
+    } else if (type == GLTF::Accessor::ComponentType::UnsignedShort) {
+        return (*reinterpret_cast<const u16_le*>(data.data() + idx * sizeof(u16))) / 65535.0f;
+    }
+    SPDLOG_ERROR("Invalid component type {}", static_cast<int>(type));
+    throw std::runtime_error("Invalid component type");
+}
+
+static void GetPosition(const SMikkTSpaceContext* context, float out[], int face, int vert) {
+    const auto& data = *reinterpret_cast<UserData*>(context->m_pUserData);
+    const int idx = GetVertexIndex(data, face * 3 + vert);
+    for (std::size_t i = 0; i < 3; ++i) {
+        out[i] = data.vertices[idx].position[i];
+    }
+}
+
+static void GetNormal(const SMikkTSpaceContext* context, float out[], int face, int vert) {
+    const auto& data = *reinterpret_cast<UserData*>(context->m_pUserData);
+    const int idx = GetVertexIndex(data, face * 3 + vert);
+    for (std::size_t i = 0; i < 3; ++i) {
+        out[i] = data.vertices[idx].normal[i];
+    }
+}
+
+static void GetTexCoord(const SMikkTSpaceContext* context, float out[], int face, int vert) {
+    const auto& data = *reinterpret_cast<UserData*>(context->m_pUserData);
+    const int idx = GetVertexIndex(data, face * 3 + vert);
+    for (std::size_t i = 0; i < 2; ++i) {
+        if (data.tex_coord == 0) {
+            out[i] = data.vertices[idx].texcoord_0[i];
+        } else {
+            out[i] = data.vertices[idx].texcoord_1[i];
+        }
+    }
+}
+
+static void SetTSpace(const SMikkTSpaceContext* context, const float tangent[], float sign,
+                      int face, int vert) {
+    auto& data = *reinterpret_cast<UserData*>(context->m_pUserData);
+    data.out[face * 3 + vert] = glm::vec4{tangent[0], tangent[1], tangent[2], sign};
+}
+
+} // namespace MikkT
+
+static bool ShouldGenerateTangent(SceneLoader& loader, const GLTF::Mesh::Primitive& primitive) {
+    if (!primitive.attributes.position.has_value() || !primitive.attributes.normal.has_value() ||
+        !primitive.material.has_value()) {
+        return false;
+    }
+
+    const auto& info = loader.materials.Get(loader, *primitive.material).glsl_material;
+    if (info.normal_texture_index == -1) {
+        return false;
+    }
+
+    const auto& texcoord =
+        info.normal_texture_texcoord == 0
+            ? static_cast<const std::optional<std::size_t>&>(primitive.attributes.texcoord_0)
+            : static_cast<const std::optional<std::size_t>&>(primitive.attributes.texcoord_1);
+    if (!texcoord.has_value()) {
+        return false;
+    }
+    return true;
+}
+
+template <glm::length_t L>
+glm::vec<L, float> LoadVec(SceneLoader& loader, std::optional<std::size_t> accessor_idx,
+                           std::size_t idx) {
+    if (!accessor_idx.has_value()) {
+        return glm::vec<L, float>{};
+    }
+    const auto& data = loader.cpu_accessors.Get(loader, *accessor_idx)->data;
+    const auto component_type = loader.gltf.accessors[*accessor_idx].component_type;
+
+    glm::vec<L, float> out;
+    for (glm::length_t i = 0; i < L; ++i) {
+        out[i] = MikkT::LoadFloat(data, idx * L + i, component_type);
+    }
+    return out;
+}
+
+void MeshPrimitiveGenerateTangent::Load(SceneLoader& loader) {
+    SPDLOG_WARN("Generating tangents");
+
+    // Load vertex data to CPU
+    max_vertices = loader.gltf.accessors[*primitive.attributes.position].count;
+    std::vector<MikkT::Vertex> old_vertices(max_vertices);
+    for (std::size_t i = 0; i < old_vertices.size(); ++i) {
+        old_vertices[i] = {
+            .position = LoadVec<3>(loader, primitive.attributes.position, i),
+            .normal = LoadVec<3>(loader, primitive.attributes.normal, i),
+            .texcoord_0 = LoadVec<2>(loader, primitive.attributes.texcoord_0, i),
+            .texcoord_1 = LoadVec<2>(loader, primitive.attributes.texcoord_1, i),
+        };
+        if (!primitive.attributes.color_0.has_value()) {
+            continue;
+        }
+        const auto& accessor = loader.gltf.accessors[*primitive.attributes.color_0];
+        if (accessor.type == "VEC3") {
+            old_vertices[i].color = {LoadVec<3>(loader, primitive.attributes.color_0, i), 1.0f};
+        } else if (accessor.type == "VEC4") {
+            old_vertices[i].color = LoadVec<4>(loader, primitive.attributes.color_0, i);
+        } else {
+            SPDLOG_ERROR("Invalid accessor type {} for color", accessor.type);
+            throw std::runtime_error("Invalid accessor type for color");
+        }
+    }
+
+    // Load index data to CPU
+    std::vector<u32> old_indices;
+    if (primitive.indices.has_value()) {
+        const auto& index_data = loader.cpu_accessors.Get(loader, *primitive.indices)->data;
+        const auto& accessor = loader.gltf.accessors[*primitive.indices];
+        for (std::size_t i = 0; i < accessor.count; ++i) {
+            if (accessor.component_type == GLTF::Accessor::ComponentType::UnsignedByte) {
+                old_indices[i] = index_data[i];
+            } else if (accessor.component_type == GLTF::Accessor::ComponentType::UnsignedShort) {
+                old_indices[i] = index_data[2 * i] + (index_data[2 * i + 1] << static_cast<u16>(8));
+            } else if (accessor.component_type == GLTF::Accessor::ComponentType::UnsignedInt) {
+                old_indices[i] = index_data[4 * i] +
+                                 (index_data[4 * i + 1] << static_cast<u32>(8)) +
+                                 (index_data[4 * i + 2] << static_cast<u32>(16)) +
+                                 (index_data[4 * i + 3] << static_cast<u32>(24));
+            } else {
+                SPDLOG_ERROR(
+                    "Invalid component type for indices {}",
+                    static_cast<int>(GLTF::Accessor::ComponentType{accessor.component_type}));
+                throw std::runtime_error("Invalid component type for indices");
+            }
+        }
+    }
+
+    MikkT::UserData user_data{
+        .vertices = old_vertices,
+        .indices = old_indices,
+        .tex_coord =
+            loader.materials.Get(loader, *primitive.material).glsl_material.normal_texture_texcoord,
+    };
+    const std::size_t total_vertices =
+        user_data.indices.empty() ? max_vertices : user_data.indices.size();
+    user_data.out.resize(total_vertices);
+
+    SMikkTSpaceInterface callbacks{
+        .m_getNumFaces = &MikkT::GetNumFaces,
+        .m_getNumVerticesOfFace = [](const SMikkTSpaceContext*, int face) { return 3; },
+        .m_getPosition = &MikkT::GetPosition,
+        .m_getNormal = &MikkT::GetNormal,
+        .m_getTexCoord = &MikkT::GetTexCoord,
+        .m_setTSpaceBasic = &MikkT::SetTSpace,
+    };
+    SMikkTSpaceContext context{
+        .m_pInterface = &callbacks,
+        .m_pUserData = &user_data,
+    };
+    if (!genTangSpaceDefault(&context)) {
+        SPDLOG_ERROR("Failed to generate tangent space");
+        throw std::runtime_error("Failed to generate tangent space");
+    }
+
+    // Reindex vertices
+    std::vector<MikkT::Vertex> vertices;
+    std::vector<u32_le> indices;
+    std::unordered_map<MikkT::Vertex, u32> vertex_index_map;
+    for (std::size_t i = 0; i < total_vertices; ++i) {
+        auto vertex = old_vertices.at(MikkT::GetVertexIndex(user_data, i));
+        vertex.tangent = user_data.out[i];
+
+        if (!vertex_index_map.count(vertex)) {
+            vertices.emplace_back(vertex);
+            vertex_index_map.emplace(std::move(vertex), static_cast<u32>(vertices.size() - 1));
+        }
+        indices.emplace_back(vertex_index_map.at(vertex));
+    }
+
+    // Upload vertices & indices
+    vertex_buffers = {{std::make_shared<VulkanImmUploadBuffer>(
+        loader.device,
+        VulkanBufferCreateInfo{
+            .size = vertices.size() * sizeof(MikkT::Vertex),
+            .usage = loader.vertex_buffer_params.usage,
+            .dst_stage_mask = loader.vertex_buffer_params.dst_stage_mask,
+            .dst_access_mask = loader.vertex_buffer_params.dst_access_mask,
+        },
+        reinterpret_cast<const u8*>(vertices.data()))}};
+
+    static constexpr auto VertexAttributes = Helpers::AttributeDescriptionsFor<MikkT::Vertex>();
+    attributes.assign(VertexAttributes.begin(), VertexAttributes.end());
+
+    bindings = {{
+        .binding = 0,
+        .stride = sizeof(MikkT::Vertex),
+        .inputRate = vk::VertexInputRate::eVertex,
+        .divisor = 1,
+    }};
+    raw_vertex_buffers = {{**vertex_buffers[0]}};
+    vertex_buffer_offsets = {{0}};
+
+    index_buffer = std::make_shared<IndexBufferAccessor>();
+    index_buffer->name = "GeneratedIndexBuffer";
+    index_buffer->gpu_buffer = std::make_shared<VulkanImmUploadBuffer>(
+        loader.device,
+        VulkanBufferCreateInfo{
+            .size = indices.size() * sizeof(u32_le),
+            .usage = loader.index_buffer_params.usage,
+            .dst_stage_mask = loader.index_buffer_params.dst_stage_mask,
+            .dst_access_mask = loader.index_buffer_params.dst_access_mask,
+        },
+        reinterpret_cast<const u8*>(indices.data()));
+    index_buffer->component_type = GLTF::Accessor::ComponentType::UnsignedInt;
+    index_buffer->type = "SCALAR";
+    index_buffer->count = indices.size();
+}
+
 Mesh::Mesh(SceneLoader& loader, const GLTF::Mesh& mesh) : name(mesh.name.value_or("Unnamed")) {
     primitives = Common::VectorFromRange(
-        mesh.primitives | std::views::transform([&loader](const GLTF::Mesh::Primitive& primitive) {
-            return std::make_unique<MeshPrimitive>(loader, primitive);
-        }));
+        mesh.primitives |
+        std::views::transform(
+            [&loader](const GLTF::Mesh::Primitive& primitive) -> std::unique_ptr<MeshPrimitive> {
+                if (ShouldGenerateTangent(loader, primitive)) {
+                    return std::make_unique<MeshPrimitiveGenerateTangent>(loader, primitive);
+                } else {
+                    return std::make_unique<MeshPrimitive>(loader, primitive);
+                }
+            }));
 }
 
 Mesh::~Mesh() = default;
@@ -500,9 +842,7 @@ Camera::~Camera() = default;
 glm::mat4 Camera::GetProj(double default_aspect_ratio) const {
     glm::mat4 proj;
     if (camera.perspective.has_value()) {
-        const double aspect_ratio = camera.perspective->aspect_ratio.has_value()
-                                        ? *camera.perspective->aspect_ratio
-                                        : default_aspect_ratio;
+        const double aspect_ratio = camera.perspective->aspect_ratio.value_or(default_aspect_ratio);
         if (camera.perspective->zfar.has_value()) {
             proj = glm::perspective<float>(static_cast<float>(camera.perspective->yfov),
                                            static_cast<float>(aspect_ratio),
@@ -530,8 +870,7 @@ glm::mat4 Camera::GetProj(double default_aspect_ratio) const {
 
 double Camera::GetAspectRatio(double default_aspect_ratio) const {
     if (camera.perspective.has_value()) {
-        return camera.perspective->aspect_ratio.has_value() ? *camera.perspective->aspect_ratio
-                                                            : default_aspect_ratio;
+        return camera.perspective->aspect_ratio.value_or(default_aspect_ratio);
     } else if (camera.orthographic.has_value()) {
         return camera.orthographic->xmag / camera.orthographic->ymag;
     } else {

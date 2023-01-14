@@ -22,3 +22,6 @@
 [submodule "getopt"]
 	path = externals/getopt/getopt
 	url = git@github.com:Chunde/getopt-for-windows.git
+[submodule "mikktspace"]
+	path = externals/mikktspace/mikktspace
+	url = git@github.com:mmikk/MikkTSpace.git
