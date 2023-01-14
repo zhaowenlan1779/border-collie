@@ -36,6 +36,8 @@ struct DescriptorBinding {
     };
     struct AccelStructures {
         std::vector<vk::AccelerationStructureKHR> accel_structures;
+        // For whatever dumb reason MSVC refuses to generate definition for destructor here
+        ~AccelStructures();
     };
     using BuffersValue = vk::ArrayProxy<const Buffers>;
     using CombinedImageSamplersValue = vk::ArrayProxy<const CombinedImageSamplers>;

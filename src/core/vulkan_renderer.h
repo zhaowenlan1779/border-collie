@@ -35,7 +35,7 @@ class VulkanRenderer : NonCopyable {
 public:
     explicit VulkanRenderer(bool enable_validation_layers,
                             std::vector<const char*> frontend_required_extensions);
-    virtual ~VulkanRenderer() = 0;
+    virtual ~VulkanRenderer();
 
     //// Public interface
     vk::raii::Instance& GetVulkanInstance();

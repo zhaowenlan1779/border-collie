@@ -9,6 +9,8 @@
 
 namespace Renderer {
 
+DescriptorBinding::AccelStructures::~AccelStructures() = default;
+
 VulkanDescriptorSets::VulkanDescriptorSets(const VulkanDevice& device_, std::size_t count_,
                                            const vk::ArrayProxy<const DescriptorBinding>& bindings)
     : device(device_), count(count_) {
