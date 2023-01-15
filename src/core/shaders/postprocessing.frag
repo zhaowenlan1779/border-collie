@@ -25,6 +25,5 @@ layout(set = 0, binding = 0) uniform sampler2D noisyTxt;
 
 void main() {
     vec2 uv = outUV;
-    float gamma = 1. / 2.2;
-    fragColor = pow(texture(noisyTxt, uv).rgba, vec4(gamma));
+    fragColor = texture(noisyTxt, uv).rgba;
 }

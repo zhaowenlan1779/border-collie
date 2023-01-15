@@ -34,14 +34,19 @@ private:
     std::unique_ptr<VulkanDevice> CreateDevice(vk::SurfaceKHR surface,
                                                const vk::Extent2D& actual_extent) const override;
 
+    std::unique_ptr<VulkanImmUploadBuffer> primitives_buffer;
+    std::unique_ptr<VulkanImmUploadBuffer> materials_buffer;
+    std::unique_ptr<VulkanTexture> error_texture;
     std::vector<std::unique_ptr<VulkanAccelStructure>> blases;
     std::unique_ptr<VulkanAccelStructure> tlas;
-    std::unique_ptr<VulkanTexture> texture{};
 
     struct Frame {};
     std::unique_ptr<VulkanFramesInFlight<Frame, 2>> frames;
-    std::unique_ptr<VulkanDescriptorSets> descriptor_sets;
+    std::unique_ptr<VulkanDescriptorSets> fixed_descriptor_set;
+    std::unique_ptr<VulkanDescriptorSets> image_descriptor_sets;
     std::unique_ptr<VulkanRayTracingPipeline> pipeline;
+
+    u32 frame_count = 0;
 };
 
 } // namespace Renderer

@@ -218,20 +218,6 @@ void VulkanRasterizer::LoadScene(GLTF::Container& gltf) {
                        *device,
                        gltf};
 
-    // Add a default material
-    scene->materials.emplace_back(
-        std::make_unique<Material>("Default", GLSL::Material{
-                                                  .base_color_factor = glm::vec4{1, 1, 1, 1},
-                                                  .base_color_texture_index = -1,
-                                                  .metallic_factor = 1.0,
-                                                  .roughness_factor = 1.0,
-                                                  .metallic_roughness_texture_index = -1,
-                                                  .normal_texture_index = -1,
-                                                  .occlusion_texture_index = -1,
-                                                  .emissive_texture_index = -1,
-                                                  .emissive_factor = glm::vec3{},
-                                              }));
-
     materials = Common::VectorFromRange(
         scene->materials | std::views::transform([this](const std::unique_ptr<Material>& material) {
             return std::make_unique<VulkanImmUploadBuffer>(

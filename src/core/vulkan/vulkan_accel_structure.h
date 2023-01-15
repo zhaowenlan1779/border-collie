@@ -46,6 +46,7 @@ public:
     struct BLASInstance {
         const VulkanAccelStructure& blas;
         glm::mat4 transform;
+        u32 custom_index{};
     };
     explicit VulkanAccelStructure(const vk::ArrayProxy<const BLASInstance>& instances);
 

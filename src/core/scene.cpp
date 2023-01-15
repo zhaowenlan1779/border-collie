@@ -362,6 +362,8 @@ Material::Material(SceneLoader& loader, const GLTF::Material& material)
         glsl_material.occlusion_strength = static_cast<float>(material.occlusion_texture->strength);
     }
 
+    LoadTexture(material.emissive_texture, glsl_material.emissive_texture_index,
+                glsl_material.emissive_texture_texcoord);
     glsl_material.emissive_factor = material.emissive_factor;
 }
 
@@ -379,6 +381,9 @@ MeshPrimitive::MeshPrimitive(SceneLoader& loader, const GLTF::Mesh::Primitive& p
     }
     if (primitive.indices.has_value()) {
         index_buffer = loader.index_accessors.Get(loader, *primitive.indices);
+    }
+    if (primitive.attributes.color_0.has_value()) {
+        color_is_vec4 = loader.gltf.accessors[*primitive.attributes.color_0].type == "VEC4";
     }
 
     const std::array<std::optional<std::size_t>, 6> attribute_accessors{{
@@ -531,6 +536,7 @@ MeshPrimitiveGenerateTangent::MeshPrimitiveGenerateTangent(SceneLoader& loader,
     if (primitive.material.has_value()) {
         material = static_cast<int>(loader.materials.GetIndex(loader, *primitive.material));
     }
+    color_is_vec4 = true;
 }
 
 MeshPrimitiveGenerateTangent::~MeshPrimitiveGenerateTangent() = default;
@@ -599,7 +605,7 @@ static float LoadFloat(const std::vector<u8>& data, std::size_t idx,
 static void GetPosition(const SMikkTSpaceContext* context, float out[], int face, int vert) {
     const auto& data = *reinterpret_cast<UserData*>(context->m_pUserData);
     const int idx = GetVertexIndex(data, face * 3 + vert);
-    for (std::size_t i = 0; i < 3; ++i) {
+    for (glm::length_t i = 0; i < 3; ++i) {
         out[i] = data.vertices[idx].position[i];
     }
 }
@@ -607,7 +613,7 @@ static void GetPosition(const SMikkTSpaceContext* context, float out[], int face
 static void GetNormal(const SMikkTSpaceContext* context, float out[], int face, int vert) {
     const auto& data = *reinterpret_cast<UserData*>(context->m_pUserData);
     const int idx = GetVertexIndex(data, face * 3 + vert);
-    for (std::size_t i = 0; i < 3; ++i) {
+    for (glm::length_t i = 0; i < 3; ++i) {
         out[i] = data.vertices[idx].normal[i];
     }
 }
@@ -615,7 +621,7 @@ static void GetNormal(const SMikkTSpaceContext* context, float out[], int face, 
 static void GetTexCoord(const SMikkTSpaceContext* context, float out[], int face, int vert) {
     const auto& data = *reinterpret_cast<UserData*>(context->m_pUserData);
     const int idx = GetVertexIndex(data, face * 3 + vert);
-    for (std::size_t i = 0; i < 2; ++i) {
+    for (glm::length_t i = 0; i < 2; ++i) {
         if (data.tex_coord == 0) {
             out[i] = data.vertices[idx].texcoord_0[i];
         } else {
@@ -633,6 +639,9 @@ static void SetTSpace(const SMikkTSpaceContext* context, const float tangent[], 
 } // namespace MikkT
 
 static bool ShouldGenerateTangent(SceneLoader& loader, const GLTF::Mesh::Primitive& primitive) {
+    if (primitive.attributes.tangent.has_value()) {
+        return false;
+    }
     if (!primitive.attributes.position.has_value() || !primitive.attributes.normal.has_value() ||
         !primitive.material.has_value()) {
         return false;
@@ -701,6 +710,7 @@ void MeshPrimitiveGenerateTangent::Load(SceneLoader& loader) {
     if (primitive.indices.has_value()) {
         const auto& index_data = loader.cpu_accessors.Get(loader, *primitive.indices)->data;
         const auto& accessor = loader.gltf.accessors[*primitive.indices];
+        old_indices.resize(accessor.count);
         for (std::size_t i = 0; i < accessor.count; ++i) {
             if (accessor.component_type == GLTF::Accessor::ComponentType::UnsignedByte) {
                 old_indices[i] = index_data[i];
@@ -732,7 +742,7 @@ void MeshPrimitiveGenerateTangent::Load(SceneLoader& loader) {
 
     SMikkTSpaceInterface callbacks{
         .m_getNumFaces = &MikkT::GetNumFaces,
-        .m_getNumVerticesOfFace = [](const SMikkTSpaceContext*, int face) { return 3; },
+        .m_getNumVerticesOfFace = [](const SMikkTSpaceContext*, int) { return 3; },
         .m_getPosition = &MikkT::GetPosition,
         .m_getNormal = &MikkT::GetNormal,
         .m_getTexCoord = &MikkT::GetTexCoord,
@@ -752,7 +762,7 @@ void MeshPrimitiveGenerateTangent::Load(SceneLoader& loader) {
     std::vector<u32_le> indices;
     std::unordered_map<MikkT::Vertex, u32> vertex_index_map;
     for (std::size_t i = 0; i < total_vertices; ++i) {
-        auto vertex = old_vertices.at(MikkT::GetVertexIndex(user_data, i));
+        auto vertex = old_vertices.at(MikkT::GetVertexIndex(user_data, static_cast<int>(i)));
         vertex.tangent = user_data.out[i];
 
         if (!vertex_index_map.count(vertex)) {
@@ -827,12 +837,12 @@ Camera::Camera() {
         .yfov = {glm::radians(45.0f)},
         .znear = {0.05},
     }};
-    view = glm::lookAt(glm::vec3{}, glm::vec3{0, 0, -1}, glm::vec3{0, 1, 0});
+    view = glm::lookAt(glm::vec3{0, 0, 0.05}, glm::vec3{0, 0, -1}, glm::vec3{0, 1, 0});
 }
 
 Camera::Camera([[maybe_unused]] const SceneLoader& loader, const GLTF::Camera& camera_,
-               glm::mat4 transform_)
-    : name(camera_.name.value_or("Unnamed")), transform(std::move(transform_)), camera(camera_) {
+               glm::mat4 transform)
+    : name(camera_.name.value_or("Unnamed")), camera(camera_) {
     view = glm::lookAt(glm::vec3{transform[3]}, glm::vec3{transform[3] - transform[2]},
                        glm::normalize(glm::vec3{transform[1]}));
 }
@@ -984,6 +994,20 @@ SceneLoader::SceneLoader(const BufferParams& vertex_buffer_params_,
         SPDLOG_WARN("No camera in main scene, creating default camera");
         scene.main_sub_scene->cameras.emplace_back(std::make_unique<Camera>());
     }
+
+    // Add a default material
+    scene.materials.emplace_back(
+        std::make_unique<Material>("Default", GLSL::Material{
+                                                  .base_color_factor = glm::vec4{1, 1, 1, 1},
+                                                  .base_color_texture_index = -1,
+                                                  .metallic_factor = 1.0,
+                                                  .roughness_factor = 1.0,
+                                                  .metallic_roughness_texture_index = -1,
+                                                  .normal_texture_index = -1,
+                                                  .occlusion_texture_index = -1,
+                                                  .emissive_texture_index = -1,
+                                                  .emissive_factor = glm::vec3{},
+                                              }));
 }
 
 SceneLoader::~SceneLoader() = default;

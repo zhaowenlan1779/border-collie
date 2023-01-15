@@ -56,7 +56,7 @@ VulkanAccelStructure::VulkanAccelStructure(const vk::ArrayProxy<const BLASInstan
         instances | std::views::transform([this](const auto& instance) {
             return vk::AccelerationStructureInstanceKHR{
                 .transform = ToVulkanMatrix(instance.transform),
-                .instanceCustomIndex = 0,
+                .instanceCustomIndex = instance.custom_index,
                 .mask = 0xFF,
                 .instanceShaderBindingTableRecordOffset = 0,
                 .flags = VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR,

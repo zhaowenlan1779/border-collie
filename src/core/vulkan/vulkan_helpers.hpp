@@ -212,21 +212,6 @@ AttributeDescriptionsFor() {
 
 namespace detail {
 
-// Scalars
-// More like "is GLSL-usable scalar"
-template <typename T>
-constexpr bool IsScalar = false;
-template <>
-constexpr bool IsScalar<bool> = true;
-template <>
-constexpr bool IsScalar<float> = true;
-template <>
-constexpr bool IsScalar<double> = true;
-template <>
-constexpr bool IsScalar<s32> = true;
-template <>
-constexpr bool IsScalar<u32> = true;
-
 struct Alignment {
     std::size_t Alignment;
     std::size_t Size;
@@ -292,7 +277,7 @@ consteval Alignment StructureAlignmentImpl(std::index_sequence<Idxs...>) {
 
 template <typename T>
 consteval Alignment CalculateAlignment(T) {
-    if constexpr (IsScalar<T>) {
+    if constexpr (std::is_scalar_v<T>) {
         return {sizeof(T), sizeof(T)};
     }
     if constexpr (!std::is_aggregate_v<T>) {
@@ -347,7 +332,7 @@ consteval bool VerifyAlignmentSingleStructureImpl(std::index_sequence<Idxs...>) 
 
 template <typename T>
 consteval bool VerifyAlignmentSingle(T) {
-    if constexpr (IsScalar<T>) {
+    if constexpr (std::is_scalar_v<T>) {
         return true;
     }
     return VerifyAlignmentSingleStructureImpl<T>(

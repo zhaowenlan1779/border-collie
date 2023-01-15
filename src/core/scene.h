@@ -145,6 +145,7 @@ public:
     // Keep them alive
     std::vector<std::shared_ptr<VulkanBuffer>> vertex_buffers;
     std::size_t max_vertices{}; // For ray tracing
+    bool color_is_vec4{};       // For ray tracing
 
     std::shared_ptr<IndexBufferAccessor> index_buffer;
 
@@ -194,7 +195,6 @@ public:
 class Camera : NonCopyable {
 public:
     std::string name;
-    glm::mat4 transform;
     glm::mat4 view;
 
     explicit Camera(); // default perspective camera
