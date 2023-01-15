@@ -309,18 +309,19 @@ void VulkanRasterizer::LoadScene(GLTF::Container& gltf) {
         });
 }
 
-void VulkanRasterizer::DrawFrame() {
+void VulkanRasterizer::DrawFrame(const Camera& external_camera) {
     device->allocator->CleanupStagingBuffers();
 
     const auto& frame = frames->AcquireNextFrame();
     frames->BeginFrame();
 
-    const auto& camera = scene->main_sub_scene->cameras[0];
+    const auto& camera = scene->main_sub_scene->cameras.empty() ? external_camera
+                                                                : *scene->main_sub_scene->cameras[0];
 
     const double viewport_aspect_ratio =
         static_cast<double>(swap_chain->extent.width) / swap_chain->extent.height;
-    const auto render_extent = GetRenderExtent(camera->GetAspectRatio(viewport_aspect_ratio));
-    const auto camera_transform = camera->GetProj(viewport_aspect_ratio) * camera->view;
+    const auto render_extent = GetRenderExtent(camera.GetAspectRatio(viewport_aspect_ratio));
+    const auto camera_transform = camera.GetProj(viewport_aspect_ratio) * camera.view;
 
     const auto& cmd = frame.command_buffer;
     pipeline->BeginRenderPass(cmd, {

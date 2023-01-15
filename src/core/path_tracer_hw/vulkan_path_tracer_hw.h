@@ -26,7 +26,7 @@ public:
 
     void Init(vk::SurfaceKHR surface, const vk::Extent2D& actual_extent) override;
     void LoadScene(GLTF::Container& gltf) override;
-    void DrawFrame() override;
+    void DrawFrame(const Camera& external_camera) override;
     void OnResized(const vk::Extent2D& actual_extent) override;
 
 private:
@@ -47,6 +47,8 @@ private:
     std::unique_ptr<VulkanRayTracingPipeline> pipeline;
 
     u32 frame_count = 0;
+    glm::mat4 last_camera_view;
+    glm::mat4 last_camera_proj;
 };
 
 } // namespace Renderer

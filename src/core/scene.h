@@ -197,8 +197,10 @@ public:
     std::string name;
     glm::mat4 view;
 
-    explicit Camera(); // default perspective camera
-    explicit Camera(const SceneLoader& loader, const GLTF::Camera& camera, glm::mat4 transform);
+    // Default perspective camera
+    explicit Camera(const glm::vec3& position, const glm::vec3& front, const glm::vec3& up);
+    explicit Camera(const SceneLoader& loader, const GLTF::Camera& camera,
+                    const glm::mat4& transform);
     ~Camera();
 
     glm::mat4 GetProj(double default_aspect_ratio) const;

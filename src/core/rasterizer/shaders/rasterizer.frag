@@ -1,3 +1,7 @@
+// Copyright 2023 Pengfei Zhu
+// Licensed under GPLv2 or any later version
+// Refer to the license.txt file included.
+
 #version 460
 #extension GL_GOOGLE_include_directive : enable
 #extension GL_EXT_nonuniform_qualifier : enable

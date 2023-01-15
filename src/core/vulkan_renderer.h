@@ -25,6 +25,7 @@ class VulkanDescriptorSets;
 template <typename ExtraData, std::size_t NumFramesInFlight>
 class VulkanFramesInFlight;
 
+class Camera;
 struct Scene;
 
 /**
@@ -43,7 +44,7 @@ public:
 
     virtual void Init(vk::SurfaceKHR surface, const vk::Extent2D& actual_extent);
     virtual void LoadScene(GLTF::Container& gltf) = 0;
-    virtual void DrawFrame() = 0;
+    virtual void DrawFrame(const Camera& external_camera) = 0;
     virtual void OnResized(const vk::Extent2D& actual_extent);
 
 protected:

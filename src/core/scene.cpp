@@ -548,7 +548,7 @@ struct Vertex {
     glm::vec3 normal{};
     glm::vec2 texcoord_0{};
     glm::vec2 texcoord_1{};
-    glm::vec4 color{};
+    glm::vec4 color{1.0f};
     glm::vec4 tangent{};
 
     bool operator==(const Vertex&) const = default;
@@ -633,7 +633,7 @@ static void GetTexCoord(const SMikkTSpaceContext* context, float out[], int face
 static void SetTSpace(const SMikkTSpaceContext* context, const float tangent[], float sign,
                       int face, int vert) {
     auto& data = *reinterpret_cast<UserData*>(context->m_pUserData);
-    data.out[face * 3 + vert] = glm::vec4{tangent[0], tangent[1], tangent[2], sign};
+    data.out[face * 3 + vert] = glm::vec4{tangent[0], tangent[1], tangent[2], -sign};
 }
 
 } // namespace MikkT
@@ -832,16 +832,16 @@ void Mesh::Load(SceneLoader& loader) {
     }
 }
 
-Camera::Camera() {
+Camera::Camera(const glm::vec3& position, const glm::vec3& front, const glm::vec3& up) {
     camera.perspective = {GLTF::Camera::Perspective{
         .yfov = {glm::radians(45.0f)},
-        .znear = {0.05},
+        .znear = {0.01},
     }};
-    view = glm::lookAt(glm::vec3{0, 0, 0.05}, glm::vec3{0, 0, -1}, glm::vec3{0, 1, 0});
+    view = glm::lookAt(position, position + front, up);
 }
 
 Camera::Camera([[maybe_unused]] const SceneLoader& loader, const GLTF::Camera& camera_,
-               glm::mat4 transform)
+               const glm::mat4& transform)
     : name(camera_.name.value_or("Unnamed")), camera(camera_) {
     view = glm::lookAt(glm::vec3{transform[3]}, glm::vec3{transform[3] - transform[2]},
                        glm::normalize(glm::vec3{transform[1]}));
@@ -991,8 +991,7 @@ SceneLoader::SceneLoader(const BufferParams& vertex_buffer_params_,
     }
 
     if (scene.main_sub_scene->cameras.empty()) {
-        SPDLOG_WARN("No camera in main scene, creating default camera");
-        scene.main_sub_scene->cameras.emplace_back(std::make_unique<Camera>());
+        SPDLOG_WARN("No camera in main scene, external camera will be used");
     }
 
     // Add a default material

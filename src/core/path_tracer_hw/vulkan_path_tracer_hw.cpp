@@ -6,6 +6,7 @@
 #include <unordered_map>
 #include <glm/glm.hpp>
 #include <spdlog/spdlog.h>
+#include "common/assert.h"
 #include "common/file_util.h"
 #include "common/ranges.h"
 #include "core/path_tracer_hw/shaders/path_tracer_glsl.h"
@@ -59,12 +60,15 @@ std::unique_ptr<VulkanDevice> VulkanPathTracerHW::CreateDevice(
                                                {
                                                    .samplerAnisotropy = VK_TRUE,
                                                    .shaderInt64 = VK_TRUE,
+                                                   .shaderInt16 = VK_TRUE,
                                                },
                                        },
                                        vk::PhysicalDeviceVulkan11Features{
                                            .storageBuffer16BitAccess = VK_TRUE,
                                        },
                                        vk::PhysicalDeviceVulkan12Features{
+                                           .storageBuffer8BitAccess = VK_TRUE,
+                                           .shaderInt8 = VK_TRUE,
                                            .runtimeDescriptorArray = VK_TRUE,
                                            .bufferDeviceAddress = VK_TRUE,
                                        },
@@ -201,9 +205,11 @@ void VulkanPathTracerHW::LoadScene(GLTF::Container& gltf) {
                 .position_stride = GetAttributeStride(0),
                 .normal_stride = GetAttributeStride(1),
                 .texcoord0_stride = GetAttributeStride(2),
+                .texcoord0_type = GetTexCoordType(primitive->attributes[2].format),
                 .texcoord1_stride = GetAttributeStride(3),
+                .texcoord1_type = GetTexCoordType(primitive->attributes[3].format),
                 .color_stride = GetAttributeStride(4),
-                .color_is_vec4 = primitive->color_is_vec4,
+                .color_type = GetColorType(primitive->attributes[4].format),
                 .tangent_stride = GetAttributeStride(5),
             });
 
@@ -446,7 +452,7 @@ void VulkanPathTracerHW::LoadScene(GLTF::Container& gltf) {
         });
 }
 
-void VulkanPathTracerHW::DrawFrame() {
+void VulkanPathTracerHW::DrawFrame(const Camera& external_camera) {
     device->allocator->CleanupStagingBuffers();
 
     const auto& frame = frames->AcquireNextFrame();
@@ -460,18 +466,28 @@ void VulkanPathTracerHW::DrawFrame() {
                             image_descriptor_sets->descriptor_sets[frame.idx]},
                            {});
 
-    const auto& camera = scene->main_sub_scene->cameras[0];
+    const auto& camera = scene->main_sub_scene->cameras.empty()
+                             ? external_camera
+                             : *scene->main_sub_scene->cameras[0];
     const double viewport_aspect_ratio =
         static_cast<double>(swap_chain->extent.width) / swap_chain->extent.height;
-    const auto render_extent = GetRenderExtent(camera->GetAspectRatio(viewport_aspect_ratio));
+    const auto render_extent = GetRenderExtent(camera.GetAspectRatio(viewport_aspect_ratio));
 
-    cmd.pushConstants<GLSL::PathTracerPushConstantBlock>(
-        *pipeline->pipeline_layout, vk::ShaderStageFlagBits::eRaygenKHR, 0,
-        {{{
-            .view_inverse = glm::inverse(camera->view),
-            .proj_inverse = glm::inverse(camera->GetProj(viewport_aspect_ratio)),
-            .frame = frame_count++,
-        }}});
+    const auto& view = camera.view;
+    const auto& proj = camera.GetProj(viewport_aspect_ratio);
+    if (view != last_camera_view || proj != last_camera_proj) {
+        frame_count = 0;
+    }
+
+    last_camera_view = view;
+    last_camera_proj = proj;
+    cmd.pushConstants<GLSL::PathTracerPushConstantBlock>(*pipeline->pipeline_layout,
+                                                         vk::ShaderStageFlagBits::eRaygenKHR, 0,
+                                                         {{{
+                                                             .view_inverse = glm::inverse(view),
+                                                             .proj_inverse = glm::inverse(proj),
+                                                             .frame = frame_count++,
+                                                         }}});
     pipeline->TraceRays(cmd, render_extent.width, render_extent.height, 1);
 
     frames->EndFrame();
