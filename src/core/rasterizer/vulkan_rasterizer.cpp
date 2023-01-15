@@ -309,14 +309,15 @@ void VulkanRasterizer::LoadScene(GLTF::Container& gltf) {
         });
 }
 
-void VulkanRasterizer::DrawFrame(const Camera& external_camera) {
+void VulkanRasterizer::DrawFrame(const Camera& external_camera, bool force_external_camera) {
     device->allocator->CleanupStagingBuffers();
 
     const auto& frame = frames->AcquireNextFrame();
     frames->BeginFrame();
 
-    const auto& camera = scene->main_sub_scene->cameras.empty() ? external_camera
-                                                                : *scene->main_sub_scene->cameras[0];
+    const bool use_external_camera =
+        force_external_camera || scene->main_sub_scene->cameras.empty();
+    const auto& camera = use_external_camera ? external_camera : *scene->main_sub_scene->cameras[0];
 
     const double viewport_aspect_ratio =
         static_cast<double>(swap_chain->extent.width) / swap_chain->extent.height;

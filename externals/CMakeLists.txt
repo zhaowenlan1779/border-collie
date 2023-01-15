@@ -12,7 +12,7 @@ endif()
 
 add_subdirectory(glfw)
 add_subdirectory(glm)
-target_compile_definitions(glm INTERFACE -DGLM_FORCE_RADIANS -DGLM_FORCE_DEPTH_ZERO_TO_ONE)
+target_compile_definitions(glm INTERFACE -DGLM_FORCE_RADIANS -DGLM_FORCE_DEPTH_ZERO_TO_ONE -DGLM_FORCE_QUAT_DATA_XYZW)
 
 add_subdirectory(mikktspace)
 add_subdirectory(simdjson)

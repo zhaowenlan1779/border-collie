@@ -190,39 +190,60 @@ void ImportanceSample(vec3 base_color, float metallic, float roughness, vec3 V, 
 
     const float alpha = roughness * roughness;
 
-    // This is an estimation of (1 - metallic) * (0.04 + 0.96 * (1 - abs(VdotH))^5
-    // Kind of a heuristic, but vk_raytrace also agrees
-    const float p = 0.5 * (1 - metallic);
+    const float p = metallic;
     if (rnd(prd.seed) < p) {
-        wi = ImportanceSampleCosine();
-    } else {
+        // Metallic
         wi = sample_ggx_vndf(V, alpha);
-    }
-    const vec3 H = normalize(wi + V);
-
-    // See glTF Spec
-    const vec3 c_diff = mix(base_color.rgb, vec3(0), metallic);
-    const vec3 f0 = mix(vec3(0.04), base_color.rgb, metallic);
-    const vec3 F = f0 + (1 - f0) * pow(1 - abs(dot(wi, H)), 5);
-
-    const float cosine_theta = dot(wi, N);
-
-    const float factor = GGX_Microfacet(H, alpha);
-    const vec3 f_diffuse = (1 - F) * (1 / PI) * c_diff;
-    const float pdf_cosine = cosine_theta / PI;
-
-    // The GGX values need to be multipled by the factor to be correct
-    const vec3 f_specular =
-        F * G2_Smith(dot(N, wi), dot(N, V), alpha) / (4 * dot(N, V) * dot(N, wi));
-    const float pdf_ggx = G1_Smith(dot(N, V), alpha) / (dot(N, V) * 4);
-    if (factor < 0.001) {
-        reflectance = f_diffuse * cosine_theta / (p * pdf_cosine);
-    } else if (factor > 1000) {
-        reflectance = f_specular * cosine_theta / ((1 - p) * pdf_ggx);
+        const vec3 H = normalize(wi + V);
+        float G2 = G2_Smith(dot(N, wi), dot(N, V), alpha);
+        float G1 = G1_Smith(dot(N, V), alpha);
+        reflectance = (base_color + (1 - base_color) * pow(1 - abs(dot(V, H)), 5)) * G2 / G1;
     } else {
-        const float pdf = mix(pdf_ggx * factor, pdf_cosine, p);
-        reflectance = (f_specular * factor + f_diffuse) * cosine_theta / pdf;
+        // Dielectric
+        wi = ImportanceSampleCosine();
+        const vec3 H = normalize(wi + V);
+        const float f0 = 0.04 + (1 - 0.04) * pow(1 - abs(dot(V, H)), 5);
+
+        const vec3 f_diffuse = (1 / PI) * base_color;
+        const vec3 f_specular =
+            vec3(GGX_Microfacet(H, alpha) * G2_Smith(dot(N, wi), dot(N, V), alpha) /
+                 (4 * dot(N, V) * dot(N, wi)));
+        reflectance = mix(f_diffuse, f_specular, f0) / PI;
     }
+
+    // // This is an estimation of (1 - metallic) * (0.04 + 0.96 * (1 - abs(VdotH))^5
+    // // Kind of a heuristic, but vk_raytrace also agrees
+    // const float p = 0.5 * (1 - metallic);
+    // if (rnd(prd.seed) < p) {
+    //     wi = ImportanceSampleCosine();
+    // } else {
+    //     wi = sample_ggx_vndf(V, alpha);
+    // }
+    // const vec3 H = normalize(wi + V);
+
+    // // See glTF Spec
+    // const vec3 c_diff = mix(base_color.rgb, vec3(0), metallic);
+    // const vec3 f0 = mix(vec3(0.04), base_color.rgb, metallic);
+    // const vec3 F = f0 + (1 - f0) * pow(1 - abs(dot(wi, H)), 5);
+
+    // const float cosine_theta = dot(wi, N);
+
+    // const float factor = GGX_Microfacet(H, alpha);
+    // const vec3 f_diffuse = (1 - F) * (1 / PI) * c_diff;
+    // const float pdf_cosine = cosine_theta / PI;
+
+    // // The GGX values need to be multipled by the factor to be correct
+    // const vec3 f_specular =
+    //     F * G2_Smith(dot(N, wi), dot(N, V), alpha) / (4 * dot(N, V) * dot(N, wi));
+    // const float pdf_ggx = G1_Smith(dot(N, V), alpha) / (dot(N, V) * 4);
+    // if (factor < 0.001) {
+    //     reflectance = f_diffuse * cosine_theta / (p * pdf_cosine);
+    // } else if (factor > 1000) {
+    //     reflectance = f_specular * cosine_theta / ((1 - p) * pdf_ggx);
+    // } else {
+    //     const float pdf = mix(pdf_ggx * factor, pdf_cosine, p);
+    //     reflectance = (f_specular * factor + f_diffuse) * cosine_theta / pdf;
+    // }
 
     // Calculate PDF
 
@@ -237,5 +258,59 @@ void ImportanceSample(vec3 base_color, float metallic, float roughness, vec3 V, 
 
     wi = wi.x * Nt + wi.y * Nb + wi.z * N;
 }
+
+// #define M_PI 3.141592
+
+// float D_GGX(float NdotH, float alphaRoughness) {
+//     float alphaRoughnessSq = alphaRoughness * alphaRoughness;
+//     float f = (NdotH * NdotH) * (alphaRoughnessSq - 1.0) + 1.0;
+//     return alphaRoughnessSq / (M_PI * f * f);
+// }
+
+// vec3 BRDF_specularGGX(vec3 f0, vec3 f90, float alphaRoughness, float VdotH, float NdotL,
+//                       float NdotV, float NdotH) {
+//     vec3 F = F_Schlick(f0, f90, VdotH);
+//     float V = V_GGX(NdotL, NdotV, alphaRoughness);
+//     float D = D_GGX(NdotH, max(0.001, alphaRoughness));
+
+//     return F * V * D;
+// }
+
+// vec3 EvalSpecularGltf(float roughness, vec3 f0, vec3 f90, vec3 V, vec3 N, vec3 L, vec3 H,
+//                       out float pdf) {
+//     pdf = 0;
+//     float NdotL = dot(N, L);
+
+//     if (NdotL < 0.0)
+//         return vec3(0.0);
+
+//     float NdotV = dot(N, V);
+//     float NdotH = clamp(dot(N, H), 0, 1);
+//     float LdotH = clamp(dot(L, H), 0, 1);
+//     float VdotH = clamp(dot(V, H), 0, 1);
+
+//     NdotL = clamp(NdotL, 0.001, 1.0);
+//     NdotV = clamp(abs(NdotV), 0.001, 1.0);
+
+//     pdf = D_GGX(NdotH, roughness) * NdotH / (4.0 * LdotH);
+//     return BRDF_specularGGX(f0, f90, roughness, VdotH, NdotL, NdotV, NdotH);
+// }
+
+// vec3 GgxSampling(float specularAlpha, float r1, float r2) {
+//     float phi = r1 * 2.0 * M_PI;
+
+//     float cosTheta = sqrt((1.0 - r2) / (1.0 + (specularAlpha * specularAlpha - 1.0) * r2));
+//     float sinTheta = clamp(sqrt(1.0 - (cosTheta * cosTheta)), 0.0, 1.0);
+//     float sinPhi = sin(phi);
+//     float cosPhi = cos(phi);
+
+//     return vec3(sinTheta * cosPhi, sinTheta * sinPhi, cosTheta);
+// }
+
+// vec3 PbrSample(vec3 V, vec3 N, inout vec3 L, inout float pdf) {
+//     pdf = 0.0;
+//     vec3 brdf = vec3(0.0);
+//     float diffuseRatio = 0.5 * (1.0 - state.mat.metallic);
+// }
 
 #endif

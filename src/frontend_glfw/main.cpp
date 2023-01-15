@@ -101,8 +101,12 @@ static void PrintHelp(const char* argv0) {
     std::cout
         << "Usage: " << argv0
         << " [options] <filename>\n"
-           "-b, --backend=BACKEND Selects the renderer to use ('rasterizer' or 'pathtracer_hw')\n"
-           "-r, --raytrace        Selects the 'pathtracer_hw' backend\n"
+           "-b, --backend=BACKEND Selects the renderer to use ('rasterizer' or 'path_tracer_hw')\n"
+           "-r, --raytrace        Selects the 'path_tracer_hw' backend\n"
+           "-e, --ext-cam         Force external camera\n"
+           "-i, --intensity       Sets intensity multiplier (path_tracer_hw only, default 20.0)\n"
+           "-a, --ambient         Set ambient light (path_tracer_hw only, default 5.0)\n"
+           "-v, --viewport        Sets viewport resolution (<width>x<height>, default 1600x1200)\n"
            "-h, --help            Display this help and exit\n";
 }
 
@@ -110,17 +114,19 @@ int main(int argc, char* argv[]) {
     Common::InitializeLogging();
 
     static struct option long_options[] = {
-        {"backend", required_argument, 0, 'b'},
-        {"raytrace", no_argument, 0, 'r'},
-        {"help", no_argument, 0, 'h'},
-        {0, 0, 0, 0},
+        {"backend", required_argument, 0, 'b'}, {"raytrace", no_argument, 0, 'r'},
+        {"ext-cam", no_argument, 0, 'e'},       {"intensity", required_argument, 0, 'i'},
+        {"ambient", required_argument, 0, 'a'}, {"viewport", required_argument, 0, 'v'},
+        {"help", no_argument, 0, 'h'},          {0, 0, 0, 0},
     };
 
     int option_index = 0;
     std::filesystem::path file_path = u8"scene.gltf";
-    bool use_raytracing = false;
+    bool use_raytracing = false, force_ext_cam = false;
+    float intensity = 20.0, ambient = 5.0;
+    int width = 1600, height = 1200;
     while (optind < argc) {
-        int arg = getopt_long(argc, argv, "b:rh", long_options, &option_index);
+        int arg = getopt_long(argc, argv, "b:rei:a:hv:", long_options, &option_index);
         if (arg == -1) {
             file_path = std::filesystem::u8path(argv[optind]);
             optind++;
@@ -130,7 +136,7 @@ int main(int argc, char* argv[]) {
                 const std::string_view backend = optarg;
                 if (backend == "rasterizer") {
                     use_raytracing = false;
-                } else if (backend == "pathtracer_hw") {
+                } else if (backend == "path_tracer_hw") {
                     use_raytracing = true;
                 } else {
                     std::cout << "Invalid backend!" << std::endl;
@@ -142,6 +148,28 @@ int main(int argc, char* argv[]) {
             case 'r':
                 use_raytracing = true;
                 break;
+            case 'e':
+                force_ext_cam = true;
+                break;
+            case 'i':
+                intensity = std::stof(std::string{optarg});
+                break;
+            case 'a':
+                ambient = std::stof(std::string{optarg});
+                break;
+            case 'v': {
+                std::string str{optarg};
+                const auto pos = str.find('x');
+                if (pos == std::string::npos) {
+                    std::cout << "Invalid viewport size!" << std::endl;
+                    PrintHelp(argv[0]);
+                    return 0;
+                } else {
+                    width = static_cast<int>(std::stol(str.substr(0, pos)));
+                    height = static_cast<int>(std::stol(str.substr(pos + 1)));
+                }
+                break;
+            }
             case 'h':
                 PrintHelp(argv[0]);
                 return 0;
@@ -151,7 +179,7 @@ int main(int argc, char* argv[]) {
 
     glfwInit();
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-    GLFWwindow* window = glfwCreateWindow(800, 600, "Border Collie", nullptr, nullptr);
+    GLFWwindow* window = glfwCreateWindow(width, height, "Border Collie", nullptr, nullptr);
     SCOPE_EXIT({
         glfwDestroyWindow(window);
         glfwTerminate();
@@ -168,13 +196,19 @@ int main(int argc, char* argv[]) {
     std::unique_ptr<Renderer::VulkanRenderer> renderer;
 #ifdef NDEBUG
     if (use_raytracing) {
-        renderer = std::make_unique<Renderer::VulkanPathTracerHW>(false, std::move(extensions));
+        auto path_tracer =
+            std::make_unique<Renderer::VulkanPathTracerHW>(false, std::move(extensions));
+        path_tracer->SetLightProperties(intensity, ambient);
+        renderer = std::move(path_tracer);
     } else {
         renderer = std::make_unique<Renderer::VulkanRasterizer>(false, std::move(extensions));
     }
 #else
     if (use_raytracing) {
-        renderer = std::make_unique<Renderer::VulkanPathTracerHW>(true, std::move(extensions));
+        auto path_tracer =
+            std::make_unique<Renderer::VulkanPathTracerHW>(true, std::move(extensions));
+        path_tracer->SetLightProperties(intensity, ambient);
+        renderer = std::move(path_tracer);
     } else {
         renderer = std::make_unique<Renderer::VulkanRasterizer>(true, std::move(extensions));
     }
@@ -188,7 +222,7 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    renderer->Init(surface, vk::Extent2D{800, 600});
+    renderer->Init(surface, vk::Extent2D{static_cast<u32>(width), static_cast<u32>(height)});
 
     try {
         GLTF::Container gltf(file_path);
@@ -211,7 +245,8 @@ int main(int argc, char* argv[]) {
 
         if (g_should_render) {
             renderer->DrawFrame(
-                Renderer::Camera{g_camera_position, GetCameraFront(), GetCameraUp()});
+                Renderer::Camera{g_camera_position, GetCameraFront(), GetCameraUp()},
+                force_ext_cam);
         }
     }
 

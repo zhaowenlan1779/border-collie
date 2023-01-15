@@ -31,7 +31,7 @@
 #include "core/path_tracer_hw/shaders/ray_common.glsl"
 #include "core/path_tracer_hw/shaders/rng.glsl"
 
-layout(push_constant) uniform constants {
+layout(push_constant, std140) uniform constants {
     PathTracerPushConstant p;
 }
 push_constant;

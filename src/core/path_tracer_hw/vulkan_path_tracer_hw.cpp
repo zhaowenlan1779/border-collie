@@ -447,12 +447,13 @@ void VulkanPathTracerHW::LoadScene(GLTF::Container& gltf) {
             .pushConstantRangeCount = 1,
             .pPushConstantRanges = TempArr<vk::PushConstantRange>{{
                 PushConstant<GLSL::PathTracerPushConstantBlock>(
-                    vk::ShaderStageFlagBits::eRaygenKHR),
+                    vk::ShaderStageFlagBits::eRaygenKHR | vk::ShaderStageFlagBits::eClosestHitKHR |
+                    vk::ShaderStageFlagBits::eMissKHR),
             }},
         });
 }
 
-void VulkanPathTracerHW::DrawFrame(const Camera& external_camera) {
+void VulkanPathTracerHW::DrawFrame(const Camera& external_camera, bool force_external_camera) {
     device->allocator->CleanupStagingBuffers();
 
     const auto& frame = frames->AcquireNextFrame();
@@ -466,9 +467,9 @@ void VulkanPathTracerHW::DrawFrame(const Camera& external_camera) {
                             image_descriptor_sets->descriptor_sets[frame.idx]},
                            {});
 
-    const auto& camera = scene->main_sub_scene->cameras.empty()
-                             ? external_camera
-                             : *scene->main_sub_scene->cameras[0];
+    const bool use_external_camera =
+        force_external_camera || scene->main_sub_scene->cameras.empty();
+    const auto& camera = use_external_camera ? external_camera : *scene->main_sub_scene->cameras[0];
     const double viewport_aspect_ratio =
         static_cast<double>(swap_chain->extent.width) / swap_chain->extent.height;
     const auto render_extent = GetRenderExtent(camera.GetAspectRatio(viewport_aspect_ratio));
@@ -481,13 +482,18 @@ void VulkanPathTracerHW::DrawFrame(const Camera& external_camera) {
 
     last_camera_view = view;
     last_camera_proj = proj;
-    cmd.pushConstants<GLSL::PathTracerPushConstantBlock>(*pipeline->pipeline_layout,
-                                                         vk::ShaderStageFlagBits::eRaygenKHR, 0,
-                                                         {{{
-                                                             .view_inverse = glm::inverse(view),
-                                                             .proj_inverse = glm::inverse(proj),
-                                                             .frame = frame_count++,
-                                                         }}});
+    cmd.pushConstants<GLSL::PathTracerPushConstantBlock>(
+        *pipeline->pipeline_layout,
+        vk::ShaderStageFlagBits::eRaygenKHR | vk::ShaderStageFlagBits::eClosestHitKHR |
+            vk::ShaderStageFlagBits::eMissKHR,
+        0,
+        {{{
+            .view_inverse = glm::inverse(view),
+            .proj_inverse = glm::inverse(proj),
+            .intensity_multiplier = intensity_multiplier,
+            .ambient_light = ambient_light,
+            .frame = frame_count++,
+        }}});
     pipeline->TraceRays(cmd, render_extent.width, render_extent.height, 1);
 
     frames->EndFrame();
@@ -521,6 +527,11 @@ void VulkanPathTracerHW::OnResized(const vk::Extent2D& actual_extent) {
                },
            });
     frame_count = 0;
+}
+
+void VulkanPathTracerHW::SetLightProperties(float multiplier_, float ambient_light_) {
+    intensity_multiplier = multiplier_;
+    ambient_light = ambient_light_;
 }
 
 } // namespace Renderer

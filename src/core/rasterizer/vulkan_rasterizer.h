@@ -30,7 +30,7 @@ public:
 
     void Init(vk::SurfaceKHR surface, const vk::Extent2D& actual_extent) override;
     void LoadScene(GLTF::Container& gltf) override;
-    void DrawFrame(const Camera& external_camera) override;
+    void DrawFrame(const Camera& external_camera, bool force_external_camera) override;
     void OnResized(const vk::Extent2D& actual_extent) override;
 
 private:

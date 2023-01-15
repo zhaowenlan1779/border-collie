@@ -26,8 +26,9 @@ public:
 
     void Init(vk::SurfaceKHR surface, const vk::Extent2D& actual_extent) override;
     void LoadScene(GLTF::Container& gltf) override;
-    void DrawFrame(const Camera& external_camera) override;
+    void DrawFrame(const Camera& external_camera, bool force_external_camera) override;
     void OnResized(const vk::Extent2D& actual_extent) override;
+    void SetLightProperties(float multiplier, float ambient_light);
 
 private:
     OffscreenImageInfo GetOffscreenImageInfo() const override;
@@ -49,6 +50,8 @@ private:
     u32 frame_count = 0;
     glm::mat4 last_camera_view;
     glm::mat4 last_camera_proj;
+    float intensity_multiplier = 20.0;
+    float ambient_light = 5.0;
 };
 
 } // namespace Renderer

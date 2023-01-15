@@ -43,8 +43,10 @@ BEGIN_STRUCT(PathTracerPushConstant)
 
 mat4 view_inverse;
 mat4 proj_inverse;
+float intensity_multiplier;
+float ambient_light;
 uint frame;
-INSERT_PADDING(3)
+INSERT_PADDING(1)
 
 END_STRUCT(PathTracerPushConstant)
 

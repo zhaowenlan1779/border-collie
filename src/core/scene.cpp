@@ -916,7 +916,9 @@ void SubScene::VisitNode(SceneLoader& loader, std::size_t node_idx, glm::mat4 pa
             transform = glm::translate(transform, (*node.translation));
         }
         if (node.rotation.has_value()) {
-            transform = transform * glm::mat4_cast(glm::quat{*node.rotation});
+            const glm::quat quat{node.rotation->x, node.rotation->y, node.rotation->z,
+                                 node.rotation->w};
+            transform = transform * glm::mat4_cast(quat);
         }
         if (node.scale.has_value()) {
             transform = glm::scale(transform, (*node.scale));
