@@ -15,7 +15,6 @@
 #extension GL_EXT_scalar_block_layout : enable
 
 #include "core/path_tracer_hw/shaders/path_tracer_glsl.h"
-#include "core/path_tracer_hw/shaders/pbr_metallic_roughness.glsl"
 #include "core/path_tracer_hw/shaders/ray_common.glsl"
 #include "core/path_tracer_hw/shaders/rng.glsl"
 #include "core/path_tracer_hw/shaders/srgb.glsl"
@@ -32,6 +31,7 @@ layout(set = 0, binding = 2, std140) readonly buffer MaterialBlock {
 };
 layout(set = 0, binding = 3) uniform sampler2D textures[];
 
+#include "core/path_tracer_hw/shaders/pbr_metallic_roughness.inl.glsl"
 #include "core/path_tracer_hw/shaders/vertex_attributes.inl.glsl"
 
 vec3 SampleTexture(uint texture_index, uint texcoord_index, vec2 texcoord0, vec2 texcoord1) {
@@ -40,29 +40,6 @@ vec3 SampleTexture(uint texture_index, uint texcoord_index, vec2 texcoord0, vec2
     }
     const vec2 texcoord = texcoord_index == 0 ? texcoord0 : texcoord1;
     return texture(textures[texture_index], texcoord).xyz;
-}
-
-// Return the tangent and binormal from the incoming normal
-void createCoordinateSystem(in vec3 N, out vec3 Nt, out vec3 Nb) {
-    if (abs(N.x) > abs(N.y))
-        Nt = vec3(N.z, 0, -N.x) / sqrt(N.x * N.x + N.z * N.z);
-    else
-        Nt = vec3(0, -N.z, N.y) / sqrt(N.y * N.y + N.z * N.z);
-    Nb = cross(N, Nt);
-}
-
-// Randomly sampling around +Z
-vec3 samplingHemisphere(inout uint seed, in vec3 x, in vec3 y, in vec3 z) {
-#define M_PI 3.141592
-
-    float r1 = rnd(seed);
-    float r2 = rnd(seed);
-    float sq = sqrt(1.0 - r2);
-
-    vec3 direction = vec3(cos(2 * M_PI * r1) * sq, sin(2 * M_PI * r1) * sq, sqrt(r2));
-    direction = direction.x * x + direction.y * y + direction.z * z;
-
-    return direction;
 }
 
 void main() {
@@ -94,22 +71,8 @@ void main() {
 
     prd.hit_value = emittance * 20;
 
-    // Determine next ray
-    vec3 tangent, bitangent;
-    createCoordinateSystem(info.world_normal, tangent, bitangent);
-    vec3 next_ray_direction = samplingHemisphere(prd.seed, tangent, bitangent, info.world_normal);
-
-    // Compute the BRDF for this ray
     const vec3 V = normalize(prd.ray_origin - info.world_position);
-    const vec3 L = next_ray_direction;
-    const vec3 H = normalize(L + V);
-    const vec3 B =
-        BRDF(base_color, metallic_roughness.x, metallic_roughness.y, V, L, info.world_normal, H);
-
-    // Probability of the new ray (cosine distribution)
-    const float p = 1 / PI;
-    prd.weight = B / p;
-
+    ImportanceSample(base_color, metallic_roughness.x, metallic_roughness.y, V, info.world_normal,
+                     prd.ray_direction, prd.weight);
     prd.ray_origin = info.world_position;
-    prd.ray_direction = next_ray_direction;
 }
