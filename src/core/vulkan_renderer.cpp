@@ -208,13 +208,16 @@ void VulkanRenderer::PostprocessAndPresent(vk::Semaphore offscreen_render_finish
     pp_frames->BeginFrame();
 
     const auto& cmd = frame.command_buffer;
-    pp_pipeline->BeginRenderPass(cmd, {
-                                          .framebuffer = *framebuffer->get(),
-                                          .renderArea =
-                                              {
-                                                  .extent = swap_chain->extent,
-                                              },
-                                      });
+    pp_pipeline->BeginRenderPass(
+        cmd, {
+                 .framebuffer = *framebuffer->get(),
+                 .renderArea =
+                     {
+                         .extent = swap_chain->extent,
+                     },
+                 .clearValueCount = 1,
+                 .pClearValues = TempArr<vk::ClearValue>{{.color = {{{0.0f, 0.0f, 0.0f, 0.0f}}}}},
+             });
     cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, **pp_pipeline);
     cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *pp_pipeline->pipeline_layout, 0,
                            pp_descriptor_sets->descriptor_sets[frame.idx], {});

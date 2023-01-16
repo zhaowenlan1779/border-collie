@@ -168,9 +168,6 @@ PointInfo ReadVertexAttributes(PrimitiveInfo primitive, Material material, int p
         // }
     }
     out_info.world_normal = normalize(vec3(normal * gl_WorldToObjectEXT));
-    // if (dot(prd.ray_direction, out_info.world_normal) > 0) {
-    //     out_info.world_normal = -out_info.world_normal;
-    // }
 
     vec4 color = vec4(1.0);
     if (primitive.color_stride != 0) {

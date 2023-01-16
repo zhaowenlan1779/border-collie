@@ -439,9 +439,10 @@ void VulkanPathTracerHW::LoadScene(GLTF::Container& gltf) {
             }},
         },
         vk::PipelineLayoutCreateInfo{
-            .setLayoutCount = 2,
+            .setLayoutCount = 3,
             .pSetLayouts = TempArr<vk::DescriptorSetLayout>{{
                 *fixed_descriptor_set->descriptor_set_layout,
+                *image_descriptor_sets->descriptor_set_layout,
                 *image_descriptor_sets->descriptor_set_layout,
             }},
             .pushConstantRangeCount = 1,
@@ -464,7 +465,8 @@ void VulkanPathTracerHW::DrawFrame(const Camera& external_camera, bool force_ext
     cmd.bindPipeline(vk::PipelineBindPoint::eRayTracingKHR, **pipeline);
     cmd.bindDescriptorSets(vk::PipelineBindPoint::eRayTracingKHR, *pipeline->pipeline_layout, 0,
                            {fixed_descriptor_set->descriptor_sets[0],
-                            image_descriptor_sets->descriptor_sets[frame.idx]},
+                            image_descriptor_sets->descriptor_sets[frame.idx],
+                            image_descriptor_sets->descriptor_sets[1 - frame.idx]},
                            {});
 
     const bool use_external_camera =
@@ -495,6 +497,24 @@ void VulkanPathTracerHW::DrawFrame(const Camera& external_camera, bool force_ext
             .frame = frame_count++,
         }}});
     pipeline->TraceRays(cmd, render_extent.width, render_extent.height, 1);
+    cmd.pipelineBarrier2({
+        .imageMemoryBarrierCount = 1,
+        .pImageMemoryBarriers = TempArr<vk::ImageMemoryBarrier2>{{{
+            .srcStageMask = vk::PipelineStageFlagBits2::eRayTracingShaderKHR,
+            .srcAccessMask = vk::AccessFlagBits2::eShaderStorageWrite,
+            .dstStageMask = vk::PipelineStageFlagBits2::eRayTracingShaderKHR,
+            .dstAccessMask = vk::AccessFlagBits2::eShaderStorageRead,
+            .image = **pp_frames->frames_in_flight[frame.idx].extras.image,
+            .subresourceRange =
+                {
+                    .aspectMask = vk::ImageAspectFlagBits::eColor,
+                    .baseMipLevel = 0,
+                    .levelCount = 1,
+                    .baseArrayLayer = 0,
+                    .layerCount = 1,
+                },
+        }}},
+    });
 
     frames->EndFrame();
 

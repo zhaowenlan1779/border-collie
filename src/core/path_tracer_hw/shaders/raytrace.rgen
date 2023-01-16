@@ -38,6 +38,7 @@ push_constant;
 
 layout(set = 0, binding = 0) uniform accelerationStructureEXT topLevelAS;
 layout(set = 1, binding = 0, rgba32f) uniform image2D image;
+layout(set = 2, binding = 0, rgba32f) uniform image2D other_image;
 
 layout(location = 0) rayPayloadEXT hitPayload prd;
 
@@ -113,8 +114,8 @@ vec3 SamplePixel(ivec2 imageCoords, ivec2 sizeImage) {
 
     // Removing fireflies
     float lum = dot(radiance, vec3(0.212671f, 0.715160f, 0.072169f));
-    if (lum > 10.0) { // magic
-        radiance *= 10.0 / lum;
+    if (lum > push_constant.p.intensity_multiplier) { // magic
+        radiance *= push_constant.p.intensity_multiplier / lum;
     }
 
     return radiance;
@@ -125,16 +126,21 @@ void main() {
     prd.seed = tea(gl_LaunchIDEXT.y * gl_LaunchSizeEXT.x + gl_LaunchIDEXT.x, int(clockARB()));
 
     vec3 final_color = vec3(0);
-    const uint NUM_SAMPLES = 8;
-    for (uint i = 0; i < NUM_SAMPLES; ++i) {
-        final_color += SamplePixel(ivec2(gl_LaunchIDEXT.xy), ivec2(gl_LaunchSizeEXT.xy));
+    uint num_samples = 0;
+    for (uint i = 0; i < 8; ++i) {
+        vec3 val = SamplePixel(ivec2(gl_LaunchIDEXT.xy), ivec2(gl_LaunchSizeEXT.xy));
+        if (isnan(val.x) || isnan(val.y) || isnan(val.z)) {
+            continue;
+        }
+        final_color += val;
+        num_samples++;
     }
-    final_color /= NUM_SAMPLES;
+    final_color /= num_samples;
 
     // Accumulate over time
     if (push_constant.p.frame > 0) {
         const float a = 1.0f / float(push_constant.p.frame + 1);
-        const vec3 old_color = imageLoad(image, ivec2(gl_LaunchIDEXT.xy)).xyz;
+        const vec3 old_color = imageLoad(other_image, ivec2(gl_LaunchIDEXT.xy)).xyz;
         imageStore(image, ivec2(gl_LaunchIDEXT.xy), vec4(mix(old_color, final_color, a), 1.f));
     } else {
         imageStore(image, ivec2(gl_LaunchIDEXT.xy), vec4(final_color, 1.0));
