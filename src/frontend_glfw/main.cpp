@@ -97,6 +97,13 @@ static void MouseCallback(GLFWwindow* window, double xpos, double ypos) {
     called_once = true;
 }
 
+static float g_camera_focal = 0.0;
+static void ScrollCallback(GLFWwindow* window, double xoffset, double yoffset) {
+    static constexpr float Sensitivity = 0.2f;
+    g_camera_focal = std::max(static_cast<float>(g_camera_focal + yoffset * Sensitivity), 0.0f);
+    SPDLOG_INFO("Current focal dist: {}", g_camera_focal);
+}
+
 static void PrintHelp(const char* argv0) {
     std::cout
         << "Usage: " << argv0
@@ -104,10 +111,13 @@ static void PrintHelp(const char* argv0) {
            "-b, --backend=BACKEND Selects the renderer to use ('rasterizer' or 'path_tracer_hw')\n"
            "-r, --raytrace        Selects the 'path_tracer_hw' backend\n"
            "-e, --ext-cam         Force external camera\n"
+           "-v, --viewport        Sets viewport resolution (<width>x<height>, default 1600x1200)\n"
+           "-h, --help            Display this help and exit\n\n"
+           "path_tracer_hw Options:\n"
            "-i, --intensity       Sets intensity multiplier (path_tracer_hw only, default 20.0)\n"
            "-a, --ambient         Set ambient light (path_tracer_hw only, default 5.0)\n"
-           "-v, --viewport        Sets viewport resolution (<width>x<height>, default 1600x1200)\n"
-           "-h, --help            Display this help and exit\n";
+           "-f, --focal           Enables depth of field and sets focal length\n"
+           "-p, --aperture        Sets camera aperture (default 0.5)";
 }
 
 int main(int argc, char* argv[]) {
@@ -117,16 +127,19 @@ int main(int argc, char* argv[]) {
         {"backend", required_argument, 0, 'b'}, {"raytrace", no_argument, 0, 'r'},
         {"ext-cam", no_argument, 0, 'e'},       {"intensity", required_argument, 0, 'i'},
         {"ambient", required_argument, 0, 'a'}, {"viewport", required_argument, 0, 'v'},
+        {"focal", required_argument, 0, 'f'},   {"aperture", required_argument, 0, 'p'},
         {"help", no_argument, 0, 'h'},          {0, 0, 0, 0},
     };
 
     int option_index = 0;
     std::filesystem::path file_path = u8"scene.gltf";
     bool use_raytracing = false, force_ext_cam = false;
-    float intensity = 20.0, ambient = 5.0;
     int width = 1600, height = 1200;
+
+    float intensity = 20.0, ambient = 5.0;
+    float aperture = 0.5;
     while (optind < argc) {
-        int arg = getopt_long(argc, argv, "b:rei:a:hv:", long_options, &option_index);
+        int arg = getopt_long(argc, argv, "b:rei:a:v:f:p:h", long_options, &option_index);
         if (arg == -1) {
             file_path = std::filesystem::u8path(argv[optind]);
             optind++;
@@ -156,6 +169,12 @@ int main(int argc, char* argv[]) {
                 break;
             case 'a':
                 ambient = std::stof(std::string{optarg});
+                break;
+            case 'f':
+                g_camera_focal = std::stof(std::string{optarg});
+                break;
+            case 'p':
+                aperture = std::stof(std::string{optarg});
                 break;
             case 'v': {
                 std::string str{optarg};
@@ -187,6 +206,7 @@ int main(int argc, char* argv[]) {
 
     glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
     glfwSetCursorPosCallback(window, &MouseCallback);
+    glfwSetScrollCallback(window, &ScrollCallback);
 
     // Query extensions required by frontend
     u32 extension_count = 0;
@@ -242,6 +262,11 @@ int main(int argc, char* argv[]) {
         const float time = glfwGetTime();
         ProcessInput(window, time - last_frame_time);
         last_frame_time = time;
+
+        if (use_raytracing) {
+            static_cast<Renderer::VulkanPathTracerHW&>(*renderer).SetCameraProperties(
+                g_camera_focal, aperture);
+        }
 
         if (g_should_render) {
             renderer->DrawFrame(

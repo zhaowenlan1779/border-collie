@@ -110,7 +110,19 @@ vec3 SamplePixel(ivec2 imageCoords, ivec2 sizeImage) {
     vec4 target = push_constant.p.proj_inverse * vec4(d.x, d.y, 1, 1);
     vec4 direction = push_constant.p.view_inverse * vec4(normalize(target.xyz), 0);
 
-    vec3 radiance = PathTrace(origin.xyz, direction.xyz);
+    // Depth-of-Field
+    vec3 randomAperturePos = vec3(0), finalRayDir = direction.xyz;
+    if (push_constant.p.focal_dist != 0) {
+        vec3 focalPoint = push_constant.p.focal_dist * direction.xyz;
+        float cam_r1 = rnd(prd.seed) * 2 * 3.1415926;
+        float cam_r2 = rnd(prd.seed) * push_constant.p.aperture;
+        vec4 cam_right = push_constant.p.view_inverse * vec4(1, 0, 0, 0);
+        vec4 cam_up = push_constant.p.view_inverse * vec4(0, 1, 0, 0);
+        randomAperturePos = (cos(cam_r1) * cam_right.xyz + sin(cam_r1) * cam_up.xyz) * sqrt(cam_r2);
+        finalRayDir = normalize(focalPoint - randomAperturePos);
+    }
+
+    vec3 radiance = PathTrace(origin.xyz + randomAperturePos, finalRayDir);
 
     // Removing fireflies
     float lum = dot(radiance, vec3(0.212671f, 0.715160f, 0.072169f));

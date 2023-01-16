@@ -478,8 +478,9 @@ void VulkanPathTracerHW::DrawFrame(const Camera& external_camera, bool force_ext
 
     const auto& view = camera.view;
     const auto& proj = camera.GetProj(viewport_aspect_ratio);
-    if (view != last_camera_view || proj != last_camera_proj) {
+    if (view != last_camera_view || proj != last_camera_proj || camera_properties_changed) {
         frame_count = 0;
+        camera_properties_changed = false;
     }
 
     last_camera_view = view;
@@ -495,6 +496,8 @@ void VulkanPathTracerHW::DrawFrame(const Camera& external_camera, bool force_ext
             .intensity_multiplier = intensity_multiplier,
             .ambient_light = ambient_light,
             .frame = frame_count++,
+            .focal_dist = focal_dist,
+            .aperture = aperture,
         }}});
     pipeline->TraceRays(cmd, render_extent.width, render_extent.height, 1);
     cmd.pipelineBarrier2({
@@ -552,6 +555,12 @@ void VulkanPathTracerHW::OnResized(const vk::Extent2D& actual_extent) {
 void VulkanPathTracerHW::SetLightProperties(float multiplier_, float ambient_light_) {
     intensity_multiplier = multiplier_;
     ambient_light = ambient_light_;
+}
+
+void VulkanPathTracerHW::SetCameraProperties(float focal_dist_, float aperture_) {
+    camera_properties_changed = (focal_dist != focal_dist_ || aperture != aperture_);
+    focal_dist = focal_dist_;
+    aperture = aperture_;
 }
 
 } // namespace Renderer
